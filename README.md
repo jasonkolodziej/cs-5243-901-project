@@ -138,3 +138,38 @@ data/raw|interim|processed|ratings/
 notebooks/                  exploratory analysis
 tests/                      synthetic end-to-end tests
 ```
+
+## Gaps
+
+> [!TIP]
+> Gap 1 (forced alignment) is a *correctness* problem — it de-risks your main hypothesis. Gap 2 (video fusion) is a *scope* problem — it's the ablation arm, and the proposal itself warns it's the most likely place to overfit. Approach them in that order, and don't build Gap 2 until the labels exist.
+
+### Gap 1: Letter-boundary segmentation (do this first)
+
+**Why it matters more than it looks.** Every transition-zone feature (`trans_vel/jerk_*`, pause placement) is computed relative to boundaries. If boundaries are off, those features are noise — and your RQ is precisely about whether those features predict fluency. But note the asymmetry: global features (`letters_per_second`, duration CV, total pause time) are quite robust to boundary error. So the first question isn't "how do I get perfect alignment" — it's "how much does boundary error actually hurt my features?"
+
+**Recommended sequence:**
+
+1. **Hand-label letter boundaries on ~30–50 clips.** Small, tedious, but it converts segmentation from an assumption into a measurable quantity. Put them in `data/ratings/` as a CSV (`clip_id, letter, start_frame, end_frame`).
+2. **Run a sensitivity analysis.** Perturb the uniform/energy-valley boundaries with random jitter (±2, ±4, ±6 frames), recompute features, and measure rank correlation of each feature against its unperturbed self. Features that survive jitter need no better aligner; features that collapse tell you what alignment quality you must reach. This is a few hours of work and might kill the whole problem.
+3. **Only if needed, CTC forced alignment.** ChicagoFSWild(+) has clip-level transcripts but no frame-level letter labels — which is exactly the setting CTC was built for. Train a letter recognizer on landmark sequences (not pixels — cheaper, and you already have the extraction pipeline) over the 55k ChicagoFSWild+ clips, then run Viterbi forced alignment with the known transcript to get per-letter spans. This plugs directly into the existing `method="forced_alignment"` hook in `segmentation/aligner.py`.
+4. Validate whatever you build against the hand-labeled set from step 1 and report boundary error in the paper — it directly addresses the Section 7 "boundary errors propagate" concern.
+
+### Gap 2: Video-fusion arm (defer until labels exist)
+
+**Don't write this code yet.** Its only job is the ablation table comparing kinematic-only vs. kinematic+video, and you can't run that meaningfully until you've collected the human ratings (target ~100+ clips × 3 raters, after checking ICC ≥ ~0.6 with the existing `agreement` command).
+
+When you do build it, the honest constraint is Section 7's warning: ~100 labeled clips cannot support end-to-end video learning. So rule out training a video CNN from scratch, and choose between:
+
+- **Frozen backbone + learned head (safest).** Run a pretrained video encoder (r3d_18 Kinetics via torchvision; better: a sign-pretrained I3D/VideoMAE checkpoint, e.g. WLASL-pretrained, which the proposal already earmarks for pretraining) over each letter span, freeze it, concatenate the embedding with your kinematic row, and train only the ridge/GBM head. Trainable parameters stay in the dozens — appropriate for your label count.
+- **Learned pose encoder (my actual recommendation).** Instead of raw pixels, feed the 21×3 landmark sequences into a small temporal model (TCN or 2-layer GRU) and learn kinematic *embeddings* end-to-end. It's still the "fusion" comparison (hand-engineered vs. learned kinematic features), it's far cheaper than video, it sidesteps the lighting/skin-tone pixel-level bias concerns from Section 7, and it can be pretrained self-supervised on all 55k unlabeled ChicagoFSWild+ clips (e.g., masked-keypoint prediction) before touching your labels.
+
+Whichever you pick: keep it on the **same signer-disjoint folds** as the other arms (the scaffold's `cross_validate` already enforces this), and compare arms on held-out test only once — repeated peeking at test with three arms and ~100 labels is how spurious "improvements" happen. One more subtlety: for the video/pose arm, augment only in ways that preserve fluency (brightness, crop, horizontal jitter) — never speed or temporal warping, since that changes the very quantity the raters scored.
+
+### Suggested overall order
+
+1. Collect ratings (use `rating-sheet`), check ICC/Fleiss' κ
+2. Hand-label boundaries on the same ~50 clips → sensitivity analysis
+3. Hypothesis test: kinematic vs. naive baseline (already runnable end-to-end)
+4. If boundaries are the bottleneck → CTC aligner; if not → skip it and say so in the paper
+5. Fused arm last, frozen/pretrained only
