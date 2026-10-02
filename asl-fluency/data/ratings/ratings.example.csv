@@ -1,0 +1,7 @@
+clip_id,rater_id,rating
+000001,instructor_a,4
+000001,instructor_b,5
+000001,fluent_signer_c,4
+000002,instructor_a,2
+000002,instructor_b,3
+000002,fluent_signer_c,2

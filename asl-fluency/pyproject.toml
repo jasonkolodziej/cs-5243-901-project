@@ -1,0 +1,56 @@
+[project]
+name = "asl-fluency"
+version = "0.1.0"
+description = "Automated fluency and speed scoring for ASL fingerspelling from hand-landmark kinematics"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "mediapipe>=0.10.14",
+    "opencv-python>=4.10",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "rich>=13.7",
+    "tqdm>=4.66",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "joblib>=1.4",
+]
+
+[project.optional-dependencies]
+# Optional deep-learning stack for the kinematic + raw-video fused model (ablation arm).
+fused = [
+    "torch>=2.3",
+    "torchvision>=0.18",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "ipykernel>=6.29",
+]
+
+[project.scripts]
+asl-fluency = "asl_fluency.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = [
+    "B008",   # typer.Option/Argument in defaults is the standard Typer idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/asl_fluency/landmarks/extractor.py" = ["BLE001"]  # batch loop must not die on one bad clip
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
