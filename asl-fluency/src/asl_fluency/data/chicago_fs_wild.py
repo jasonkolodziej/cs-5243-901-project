@@ -27,10 +27,13 @@ _COLUMN_ALIASES = {
     "video": "video_path",
     "vid_name": "video_path",
     "label": "transcript",
+    "label_proc": "transcript",      # ChicagoFSWild.csv
     "text": "transcript",
     "word": "transcript",
-    "signer": "signer_id",
+    "signer": "signer_id",           # ChicagoFSWild.csv
     "speaker": "signer_id",
+    "partition": "split",            # ChicagoFSWild.csv (train/dev/test)
+    "number_of_frames": "n_frames",  # ChicagoFSWild.csv
 }
 
 

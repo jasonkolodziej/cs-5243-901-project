@@ -53,7 +53,11 @@ def landmarks(
     if limit:
         df = df.head(limit)
     out_dir = resolve_path(cfg, "interim_dir") / "landmarks"
-    saved = batch_extract(ClipIndex(df), out_dir, **cfg["landmarks"])
+    lm_cfg = dict(cfg["landmarks"])
+    model_path = _project_path(lm_cfg.pop("model_path", None), cfg)
+    lm_cfg.pop("backend", None)
+    lm_cfg.pop("static_image_mode", None)
+    saved = batch_extract(ClipIndex(df), out_dir, model_path=model_path, **lm_cfg)
     typer.echo(f"{len(saved)} landmark files in {out_dir}")
 
 
@@ -159,6 +163,126 @@ def evaluate(
         strata.to_csv(resolve_path(cfg, "processed_dir") / "stratified_results.csv",
                       index=False)
     typer.echo(f"results -> {out}")
+
+
+@app.command()
+def demo(
+    video: Path = typer.Argument(..., help="single fingerspelling video file"),
+    transcript: str = typer.Option(..., help="the spelled word, e.g. INTERDISCIPLINARY"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    annotated_out: Path | None = typer.Option(None, help="save skeleton-overlay mp4"),
+) -> None:
+    """Full single-clip report: landmarks -> segmentation -> fluency features.
+
+    The quick way to test the pipeline on any video file (e.g. one reassembled
+    from ChicagoFSWild frames) without building the whole corpus index.
+    """
+    from .features.pipeline import compute_feature_row
+    from .landmarks.extractor import extract_landmarks
+
+    cfg = load_config(config)
+    lm_cfg = dict(cfg["landmarks"])
+    model_path = _project_path(lm_cfg.pop("model_path", None), cfg)
+    lm_cfg.pop("backend", None)
+    lm_cfg.pop("static_image_mode", None)
+
+    seq = extract_landmarks(video, video.stem, model_path=model_path, **lm_cfg)
+    row = compute_feature_row(
+        seq, transcript,
+        seg_method=cfg["segmentation"]["method"],
+        refine_radius=cfg["segmentation"]["refine_radius_frames"],
+        smooth_window=cfg["features"]["smooth_window_frames"],
+        smooth_polyorder=cfg["features"]["smooth_polyorder"],
+        pause_speed_percentile=cfg["features"]["pause_speed_percentile"],
+        min_pause_frames=cfg["features"]["min_pause_frames"],
+    )
+    typer.echo(f"clip: {video.name}  transcript: {transcript.upper()}")
+    typer.echo(f"frames: {seq.n_frames} @ {seq.fps:.1f} fps "
+               f"(detected hand in {seq.detection_rate * 100:.0f}%)")
+    for k, v in row.items():
+        if k not in ("clip_id", "n_letters", "detection_rate"):
+            typer.echo(f"  {k:22s} {v:.4f}" if isinstance(v, float) else f"  {k:22s} {v}")
+
+    if annotated_out:
+        _render_annotated(video, seq, annotated_out)
+        typer.echo(f"annotated video -> {annotated_out}")
+
+
+@app.command()
+def live(
+    source: str = typer.Option("0", help="webcam index ('0') or video file path"),
+    transcript: str | None = typer.Option(None, help="word being spelled"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    display: bool = typer.Option(True, "--display/--no-display"),
+    save_video: Path | None = typer.Option(None, help="save annotated stream mp4"),
+    report: bool = typer.Option(True, help="print full feature report at the end"),
+) -> None:
+    """Live fluency monitoring: webcam (default) or a video file as the source.
+
+    Shows/saves a skeleton overlay with live wrist-speed, detection-rate, and
+    letters-per-second HUD; on exit, runs the full offline feature pipeline
+    over the captured stream.
+    """
+    from .landmarks.live import LiveFluencyMonitor, run_live
+
+    cfg = load_config(config)
+    lm_cfg = cfg["landmarks"]
+    monitor = LiveFluencyMonitor(
+        model_path=_project_path(lm_cfg.get("model_path"), cfg),
+        transcript=transcript,
+        max_num_hands=lm_cfg.get("max_num_hands", 2),
+        min_detection_confidence=lm_cfg.get("min_detection_confidence", 0.5),
+        min_tracking_confidence=lm_cfg.get("min_tracking_confidence", 0.5),
+    )
+    src: int | str = int(source) if source.isdigit() else source
+    seq = run_live(src, monitor, display=display, save_video=save_video)
+    typer.echo(f"captured {seq.n_frames} frames @ {seq.fps:.1f} fps, "
+               f"detection rate {seq.detection_rate * 100:.0f}%")
+
+    if report and transcript:
+        from .features.pipeline import compute_feature_row
+
+        row = compute_feature_row(
+            seq, transcript,
+            seg_method=cfg["segmentation"]["method"],
+            refine_radius=cfg["segmentation"]["refine_radius_frames"],
+            smooth_window=cfg["features"]["smooth_window_frames"],
+            smooth_polyorder=cfg["features"]["smooth_polyorder"],
+            pause_speed_percentile=cfg["features"]["pause_speed_percentile"],
+            min_pause_frames=cfg["features"]["min_pause_frames"],
+        )
+        for k, v in row.items():
+            if k not in ("clip_id", "n_letters", "detection_rate"):
+                typer.echo(f"  {k:22s} {v:.4f}" if isinstance(v, float) else f"  {k:22s} {v}")
+
+
+def _project_path(p: str | None, cfg: dict) -> Path:
+    """Resolve a config path relative to the project root."""
+    from .config import DEFAULT_CONFIG_PATH
+
+    root = DEFAULT_CONFIG_PATH.parents[1]
+    return root / p if p else root / "assets" / "hand_landmarker.task"
+
+
+def _render_annotated(video: Path, seq, out: Path) -> None:
+    import cv2
+
+    from .landmarks.extractor import draw_landmarks
+
+    cap = cv2.VideoCapture(str(video))
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"),
+                             seq.fps or 30.0, (w, h))
+    i = 0
+    while True:
+        ok, bgr = cap.read()
+        if not ok or i >= seq.n_frames:
+            break
+        writer.write(draw_landmarks(bgr, seq.landmarks[i] if seq.frame_ok[i] else None))
+        i += 1
+    cap.release()
+    writer.release()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,78 @@
+**********************************************************
+Chicago-Fingerspelling-in-the-Wild (ChicagoFSWild) 
+**********************************************************
+
+This is a collaborative data collection effort by U. Chicago and TTI-Chicago researchers. This is to our knowledge the first collection of American Sign Language fingerspelling data "in the wild," that is in naturally occurring (online) video.
+
+The ChicagoFSWild data set contains 7304 ASL fingerspelling sequences signed by 160 signers, carefully annotated by students who have studied ASL.
+
+More information on the data set can be found in the following paper (please cite this paper if you use the data):
+
+B. Shi, A. Martinez Del Rio, J. Keane, J. Michaux, D. Brentari, G. Shakhnarovich, and K. Livescu
+"American Sign Language fingerspelling recognition in the wild"
+IEEE Workshop on Spoken Language Technology 2018
+
+This research was funded by NSF grants NSF-1433485 and NSF/BCS-1251807.
+
+
+**********************************************************
+Data description
+**********************************************************
+
+ChicagoFSWild.tgz contains a number of files, described below.  To get started using the data set, you only need ChicagoFSWild.csv and ChicagoFSWild-Frames.tgz.  To also use our signing hand bounding box annotations, you will need (4) and (5) below.
+
+(1) ChicagoFSWild.csv
+
+This is the main data description file.  Each line corresponds to a single fingerspelling sequence.
+
+filename - name of fingerspelling sequence
+url - url of the video from which the sequence was obtained
+start_time - start time of the sequence in that video, in the format HH:MM:SS.xxx
+number_of_frames - number of frames of the fingerspelling sequence
+width - frame width
+height - frame height
+label_raw - raw label from the annotator
+label_notes - annotator notes
+label_proc - processed label (! --> <sp>), used for training and testing
+partition: partition (train/dev/test) the sequence belongs to 
+signer: signer identity for this sequence
+
+(2) ChicagoFSWild-Frames.tgz
+
+This file contains sequences of image frames (in .jpg), identified by "filename" in ChicagoFSWild.csv.  You can also download the videos and extract the frames yourself.  Note, however, that videos can be removed by their owners at any time, so it may not be possible to extract the full set of frames.  The only reason to extract frames yourself is if you wish to change any steps in the process.
+
+If you do wish to extract the frames yourself, you can do so using the files batch.csv, individual.csv, unavailable.csv.  You will also need youtube-dl and ffmpeg.  The instructions below have been tested with youtube-dl version 2018.11.18, ffmpeg version 4.0.
+
+All files in batch.csv can be downloaded and extracted into frame sequences automatically with our script. URLs in individual.csv are not supported and must be downloaded individually. You can use Chrome/Firefox extension flash-video-downloader to download these videos. Sequences in unavailable.csv are from videos where the original URLs are not available as of the data release date.  Please contact us for more details on obtaining these data. 
+
+To extract the fingerspelling sequence frames in batch.csv automatically, run the following script:
+
+python getChicagoFSWild.py --csv batch.csv --target_dir <DATA_DIR> --log download-log.txt
+
+The finergspelling sequences are extracted into <DATA_DIR>. All sequences that fail to be downloaded or extracted are listed in download-log.txt 
+
+(3) annotation_instructions.txt
+
+This text file provides the instructions used by the annotators, which define the conventions used for the raw labels.  This is provided for completeness.  However, to reproduce our results, only the "label_proc" field in the CSV file is needed.
+
+(4) HandAnnotation.csv: 
+
+This file lists the hand bounding box annotations for a subset of the fingerspelling sequences in ChicagoFSWild.
+
+filename - name of fingerspelling sequence
+partition - partition (train/dev) the sequence belongs to, used to train and tune the hand detector
+
+(5) BBox
+
+A folder containing the hand bounding boxes listed in HandAnnotation.csv
+
+[filename]/[xxxx].txt - hand bounding boxes in frame indexed by [xxxx] of the fingerspelling sequence [filename]
+
+format of bounding boxes - 
+x0, y0, x1, y1, L 
+x0, y0, x1, y1, L
+...
+
+Each row corresponds to one hand bounding box with top left corner at (x0, y0) and bottom right corner at (x1, y1).
+
+L = 1 indicates signing hand(s), L = 2 indicates non-signing hand(s)

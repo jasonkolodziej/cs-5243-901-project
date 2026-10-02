@@ -30,7 +30,35 @@ cd asl-fluency
 uv sync                     # core pipeline
 uv sync --extra dev         # + pytest, ruff
 uv sync --extra fused       # + torch, for the video-fusion ablation arm
+
+# one-time: MediaPipe hand landmarker model (~8 MB)
+curl -L -o assets/hand_landmarker.task \
+  https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 ```
+
+## Try it on real video (no dataset download needed)
+
+`data/raw/fs_sample/` ships one real ChicagoFSWild clip (79 frames reassembled to
+`mj_bienvenu_4509.mp4`, transcript "INTERDISCIPLINARY", a fluent signer) plus the full
+`ChicagoFSWild.csv` metadata, so every stage can be smoke-tested on real data:
+
+```bash
+# single-clip report: landmarks -> letter segmentation -> fluency features
+asl-fluency demo data/raw/fs_sample/mj_bienvenu_4509.mp4 \
+  --transcript INTERDISCIPLINARY --annotated-out annotated.mp4
+
+# live mode: webcam (default --source 0) or any video file as a stand-in stream
+asl-fluency live                                   # webcam, skeleton + HUD, Q to stop
+asl-fluency live --source path/to/clip.mp4 --transcript HELLO --no-display \
+  --save-video overlay.mp4                         # headless / file source
+```
+
+Expected on the sample clip: 100% detection, ~6.5 letters/sec, letter-duration CV ≈ 0.10 —
+fast, highly consistent signing, exactly what a fluent clip should look like.
+
+The hand selector (`SigningHandSelector`) picks the *most active* hand via fingertip-motion
+EMA — on clips with a visible resting hand this is what keeps features computed on the
+signing hand (continuity-only selection locks onto the wrong hand).
 
 ## Datasets (proposal Section 5)
 
@@ -77,7 +105,7 @@ evaluation) are exemplified in `data/ratings/*.example.csv`.
 | Proposal item | Code |
 |---|---|
 | RQ / hypothesis test (kinematics vs. naive speed) | `evaluation/ablation.py` arms `naive_speed_only` vs. `kinematic_*` |
-| Step 1 landmarks | `landmarks/extractor.py` |
+| Step 1 landmarks | `landmarks/extractor.py` (Tasks API, `SigningHandSelector`), `landmarks/live.py` (webcam/stream) |
 | Step 2 letter boundaries | `segmentation/aligner.py` (`uniform`, `energy_valley`, forced-alignment hook) |
 | Step 3 fluency features | `features/kinematics.py` (letters/s, transition velocity/jerk, pauses, log dimensionless jerk, path efficiency) |
 | Step 4 learned scorer | `models/baseline.py`, `models/fused.py` (video-fusion arm, `--extra fused`) |

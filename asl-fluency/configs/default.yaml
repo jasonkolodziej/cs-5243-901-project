@@ -13,6 +13,7 @@ paths:
 
 landmarks:
   backend: mediapipe               # currently only "mediapipe"
+  model_path: assets/hand_landmarker.task   # see README for the one-time download
   static_image_mode: false
   max_num_hands: 2                 # fingerspelling is dominant-hand; 2 lets us pick it
   min_detection_confidence: 0.5
