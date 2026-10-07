@@ -34,6 +34,12 @@ Submit a one-page proposal containing:
 - [ ] Discuss challenges encountered.
 - [ ] Outline the remaining work.
 
+### Tasks
+
+1. Presentation - show off fluency features that we captured and present evaluation metrics, potentially in graphical form.
+   1. Using Youtube videos -- would help answering more of the questions.
+2. 
+
 ## 4. Final Project (250 points, Group)
 
 The final submission consists of:
