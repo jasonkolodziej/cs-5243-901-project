@@ -69,8 +69,11 @@ class ClipIndex:
 def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> ClipIndex:
     """Build the clip index for a locally downloaded corpus.
 
-    Scans raw_dir for annotation CSVs (annotation*.csv, *labels*.csv, or any
-    csv at the top level) and normalises column names.
+    Scans raw_dir for the corpus annotation CSV (ChicagoFSWild.csv /
+    ChicagoFSWildPlus.csv, or any CSV that contains recognisable
+    transcript + video columns) and normalises column names. Clip paths are
+    resolved against common frame-extraction layouts (see _resolve_clip_paths);
+    note ChicagoFSWild clips are frame *directories*, not video files.
     """
     raw_dir = Path(raw_dir)
     candidates = sorted(raw_dir.glob("**/*.csv"))
@@ -79,19 +82,54 @@ def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> Clip
             f"No annotation CSV found under {raw_dir}. "
             f"Download {dataset} first (see README 'Datasets' section)."
         )
-    df = pd.concat((pd.read_csv(c) for c in candidates), ignore_index=True)
-    df = df.rename(columns={c: _COLUMN_ALIASES[c.lower()] for c in df.columns
-                            if c.lower() in _COLUMN_ALIASES})
-    df.columns = [c.lower() for c in df.columns]
-    if "transcript" not in df.columns or "video_path" not in df.columns:
+    df = None
+    for cand in candidates:
+        trial = pd.read_csv(cand)
+        trial = trial.rename(columns={c: _COLUMN_ALIASES[c.lower()] for c in trial.columns
+                                      if c.lower() in _COLUMN_ALIASES})
+        trial.columns = [c.lower() for c in trial.columns]
+        if {"transcript", "video_path"} <= set(trial.columns):
+            df = trial
+            break
+    if df is None:
         raise ValueError(
-            f"Could not find transcript/video columns in {candidates}; "
-            f"got columns {list(df.columns)}. Add an alias in _COLUMN_ALIASES."
+            f"No CSV under {raw_dir} had recognisable transcript/video columns. "
+            f"Tried: {[c.name for c in candidates]}. Add aliases in _COLUMN_ALIASES."
         )
-    df["video_path"] = df["video_path"].map(lambda p: str(raw_dir / p))
-    df["clip_id"] = df.get("clip_id", pd.Series(range(len(df)))).astype(str)
+    df["video_path"] = _resolve_clip_paths(df, raw_dir)
+    df["clip_id"] = df["video_path"].map(lambda p: Path(p).name).astype(str)
     if "signer_id" not in df.columns:
         df["signer_id"] = None
     df["transcript"] = df["transcript"].astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
-    return ClipIndex(df[["clip_id", "video_path", "transcript", "signer_id"]
-                        + [c for c in ("fps", "n_frames", "split") if c in df.columns]])
+    keep = ["clip_id", "video_path", "transcript", "signer_id"] + [
+        c for c in ("fps", "n_frames", "split") if c in df.columns
+    ]
+    return ClipIndex(df[keep])
+
+
+def _resolve_clip_paths(df: pd.DataFrame, raw_dir: Path) -> pd.Series:
+    """Map the CSV's relative `filename` to an existing local path.
+
+    The CSV stores paths like `aslized/elsie_stecker_0001` relative to the
+    frames root, but the nested archives get extracted in different layouts.
+    Try the common roots in order; fall back to raw_dir/rel (which will fail
+    loudly later if the frames really are missing).
+    """
+    roots = [
+        raw_dir,
+        raw_dir / "ChicagoFSWild-Frames",
+        raw_dir / "ChicagoFSWildPlus-Frames",
+        raw_dir / "frames",
+        raw_dir / "ChicagoFSWild",
+        raw_dir / "ChicagoFSWildPlus",
+    ]
+    roots = [r for r in roots if r.is_dir()]
+
+    def resolve(rel: str) -> str:
+        for root in roots:
+            p = root / rel
+            if p.exists():
+                return str(p)
+        return str(raw_dir / rel)
+
+    return df["video_path"].map(resolve)

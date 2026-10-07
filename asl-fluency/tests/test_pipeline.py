@@ -29,6 +29,53 @@ def make_seq(clip_id="c0", n_frames=120, fps=30.0, dropout=0.0, seed=0):
     return LandmarkSequence(clip_id, lm, frame_ok, fps)
 
 
+class TestFrameDirectorySource:
+    def test_frame_dir_capture_reads_sorted(self, tmp_path):
+        import cv2
+
+        from asl_fluency.landmarks.extractor import open_frame_source
+
+        for i in (3, 1, 2):  # write out of order; reader must sort
+            img = np.full((8, 8, 3), i * 80, dtype=np.uint8)
+            cv2.imwrite(str(tmp_path / f"{i:04d}.jpg"), img)
+        cap, fps = open_frame_source(tmp_path, default_fps=25.0)
+        assert fps == 25.0
+        vals = []
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            vals.append(int(frame[0, 0, 0]))
+        assert vals == [80, 160, 240]
+
+    def test_loader_resolves_frame_roots(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        frames = tmp_path / "ChicagoFSWild-Frames" / "aslized" / "clip_0001"
+        frames.mkdir(parents=True)
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,aslized/clip_0001,hello,0000\n"
+        )
+        ci = load_clip_index(tmp_path)
+        assert len(ci) == 1
+        row = ci.frame.iloc[0]
+        assert row["video_path"] == str(frames)  # resolved into frames root
+        assert row["transcript"] == "HELLO"
+        assert row["clip_id"] == "clip_0001"
+
+    def test_loader_ignores_non_clip_csvs(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        # individual.csv has no transcript/video columns -> must not be picked
+        (tmp_path / "individual.csv").write_text("signer,age\n0000,30\n")
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,a/b_0001,hi,0000\n"
+        )
+        ci = load_clip_index(tmp_path)
+        assert len(ci) == 1
+        assert ci.frame.iloc[0]["transcript"] == "HI"
+
+
 class TestSegmentation:
     def test_uniform_covers_letters(self):
         seq = make_seq()

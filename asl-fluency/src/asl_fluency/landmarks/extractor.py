@@ -101,6 +101,59 @@ def _make_landmarker(model_path: str | Path, max_num_hands: int,
     return HandLandmarker.create_from_options(options)
 
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+
+
+def open_frame_source(
+    source: str | Path, default_fps: float = 30.0
+) -> tuple[cv2.VideoCapture | FrameDirectoryCapture, float]:
+    """Open a clip source: a video file OR a directory of frame images.
+
+    ChicagoFSWild distributes clips as frame directories (e.g.
+    `aslized/elsie_stecker_0001/0001.jpg`), not video files, so both layouts
+    are first-class. Returns (capture-like object, fps). Frame directories
+    have no native frame rate, so `default_fps` is used.
+    """
+    source = Path(source)
+    if source.is_dir():
+        cap = FrameDirectoryCapture(source)
+        if not cap.isOpened():
+            raise OSError(f"No frame images ({sorted(IMAGE_SUFFIXES)}) in {source}")
+        return cap, float(default_fps)
+    cap = cv2.VideoCapture(str(source))
+    if not cap.isOpened():
+        raise OSError(f"Cannot open video: {source}")
+    return cap, float(cap.get(cv2.CAP_PROP_FPS) or default_fps)
+
+
+class FrameDirectoryCapture:
+    """Minimal cv2.VideoCapture-compatible reader over a frame directory."""
+
+    def __init__(self, directory: Path) -> None:
+        self.files = sorted(
+            p for p in Path(directory).iterdir() if p.suffix.lower() in IMAGE_SUFFIXES
+        )
+        self._i = 0
+
+    def isOpened(self) -> bool:
+        return bool(self.files)
+
+    def read(self):
+        if self._i >= len(self.files):
+            return False, None
+        img = cv2.imread(str(self.files[self._i]))
+        self._i += 1
+        if img is None:
+            return False, None
+        return True, img
+
+    def get(self, prop: int) -> float:  # only FPS is meaningful
+        return 0.0
+
+    def release(self) -> None:
+        pass
+
+
 def extract_landmarks(
     video_path: str | Path,
     clip_id: str,
@@ -111,18 +164,16 @@ def extract_landmarks(
     min_tracking_confidence: float = 0.5,
     hand: str = "auto",
     target_fps: float | None = None,
+    default_fps: float = 30.0,
 ) -> LandmarkSequence:
-    """Run HandLandmarker over a video file.
+    """Run HandLandmarker over a video file or a frame directory.
 
     `hand="auto"` tracks the most active hand over time (fingertip-motion EMA),
     which is the fingerspelling hand; see SigningHandSelector.
     """
     import mediapipe as mp
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise OSError(f"Cannot open video: {video_path}")
-    native_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap, native_fps = open_frame_source(video_path, default_fps)
     step = max(1, round(native_fps / target_fps)) if target_fps else 1
     fps = native_fps / step
 

@@ -267,22 +267,24 @@ def _project_path(p: str | None, cfg: dict) -> Path:
 def _render_annotated(video: Path, seq, out: Path) -> None:
     import cv2
 
-    from .landmarks.extractor import draw_landmarks
+    from .landmarks.extractor import draw_landmarks, open_frame_source
 
-    cap = cv2.VideoCapture(str(video))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"),
-                             seq.fps or 30.0, (w, h))
+    cap, _ = open_frame_source(video)
+    writer = None
     i = 0
     while True:
         ok, bgr = cap.read()
         if not ok or i >= seq.n_frames:
             break
+        if writer is None:
+            h, w = bgr.shape[:2]
+            writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"),
+                                     seq.fps or 30.0, (w, h))
         writer.write(draw_landmarks(bgr, seq.landmarks[i] if seq.frame_ok[i] else None))
         i += 1
     cap.release()
-    writer.release()
+    if writer:
+        writer.release()
 
 
 if __name__ == "__main__":

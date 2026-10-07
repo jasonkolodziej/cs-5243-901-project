@@ -70,6 +70,21 @@ Download manually into `data/raw/`:
 | ChicagoFSWild+ | 55,232 clips, 260 signers | scale-up if compute allows |
 | WLASL / MS-ASL | isolated signs | hand-pose pretraining only |
 
+**Important: ChicagoFSWild(+) clips are directories of JPEG frames, not video files.**
+The pipeline handles this natively — extract the nested frames archive so clips sit in
+one of these layouts (the loader auto-detects them):
+
+```
+data/raw/ChicagoFSWild.csv                     <- annotation CSV (any depth works)
+data/raw/ChicagoFSWild-Frames/<signer>/<clip>/0001.jpg ...   # or
+data/raw/<signer>/<clip>/0001.jpg ...                        # or
+data/raw/frames/<signer>/<clip>/0001.jpg ...
+```
+
+Frame directories have no native frame rate, so `landmarks.default_fps` (30) is used for
+rate features. Run `asl-fluency demo data/raw/ChicagoFSWild-Frames/<signer>/<clip>
+--transcript WORD` to sanity-check one clip before the batch run.
+
 No dataset has fluency labels — collect a small human-rated subset (1–5 scale,
 instructors or fluent signers) with the built-in rating-sheet tooling.
 

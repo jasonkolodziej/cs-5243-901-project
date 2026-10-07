@@ -114,20 +114,21 @@ def run_live(
     *,
     display: bool = True,
     save_video: str | Path | None = None,
+    default_fps: float = 30.0,
 ) -> LandmarkSequence:
-    """Drive a monitor from a webcam index or a video file until EOF / Q."""
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        raise OSError(f"Cannot open source: {source}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    """Drive a monitor from a webcam index, video file, or frame directory."""
+    if isinstance(source, int):
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            raise OSError(f"Cannot open source: {source}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or default_fps
+    else:
+        from .extractor import open_frame_source
+
+        cap, fps = open_frame_source(source, default_fps)
     monitor._fps = fps
 
     writer = None
-    if save_video:
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        writer = cv2.VideoWriter(str(save_video), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-
     t0 = time.monotonic()
     try:
         while True:
@@ -137,7 +138,11 @@ def run_live(
             ts = int((time.monotonic() - t0) * 1000)
             annotated, stats = monitor.process_frame(bgr, ts)
             _draw_hud(annotated, stats)
-            if writer:
+            if save_video:
+                if writer is None:  # lazy init: frame dirs report no width/height
+                    h, w = annotated.shape[:2]
+                    writer = cv2.VideoWriter(str(save_video),
+                                             cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
                 writer.write(annotated)
             if display:
                 cv2.imshow("ASL fluency (Q to stop)", annotated)

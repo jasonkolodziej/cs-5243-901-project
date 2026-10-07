@@ -19,6 +19,7 @@ landmarks:
   min_detection_confidence: 0.5
   min_tracking_confidence: 0.5
   target_fps: null                 # null = keep native fps
+  default_fps: 30.0                # frame directories (ChicagoFSWild) have no native fps
   hand: auto                       # auto | left | right  (which hand is the signing hand)
 
 segmentation:
