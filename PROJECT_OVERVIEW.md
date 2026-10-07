@@ -17,13 +17,13 @@ The course project provides an opportunity to explore a modern computer vision r
 
 Submit a one-page proposal containing:
 
-- [ ] Problem Statement #cv-problem
-- [ ] Background and Related Work #cv-background
-- [ ] Research Question / Hypothesis #cv-question-hype
-- [ ] Proposed Approach #cv-approach
-- [ ] Datasets #cv-dataset #needed
-- [ ] Evaluation Metrics #cv-eval
-- [ ] Expected Challenges #cv-challenges
+- [x] Problem Statement #cv-problem
+- [x] Background and Related Work #cv-background
+- [x] Research Question / Hypothesis #cv-question-hype
+- [x] Proposed Approach #cv-approach
+- [x] Datasets #cv-dataset #needed
+- [x] Evaluation Metrics #cv-eval
+- [x] Expected Challenges #cv-challenges
 
 ## 3. Midterm Progress Checkpoint (50 points, Group)
 
