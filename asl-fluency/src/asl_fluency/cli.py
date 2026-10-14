@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import typer
 
-from .config import load_config, resolve_path
+from .config import load_config, project_root, resolve_path
 
 app = typer.Typer(help="ASL fingerspelling fluency scoring pipeline.")
 
@@ -30,7 +30,9 @@ def index(
     from .data.chicago_fs_wild import load_clip_index
 
     cfg = load_config(config)
-    ci = load_clip_index(resolve_path(cfg, "raw_dir"), dataset)
+    ci = load_clip_index(
+        resolve_path(cfg, "raw_dir"), dataset, base_dir=project_root()
+    )
     df = ci.signer_disjoint_split(cfg["project"]["seed"]) if split else ci.frame
     out = resolve_path(cfg, "interim_dir") / "clip_index.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +54,11 @@ def landmarks(
     df = pd.read_csv(index_path, dtype={"clip_id": str})
     if limit:
         df = df.head(limit)
+    # video_path may be stored relative to project root; resolve for extraction
+    root = project_root()
+    df["video_path"] = df["video_path"].apply(
+        lambda p: str(root / p) if not Path(p).is_absolute() else p
+    )
     out_dir = resolve_path(cfg, "interim_dir") / "landmarks"
     lm_cfg = dict(cfg["landmarks"])
     model_path = _project_path(lm_cfg.pop("model_path", None), cfg)
@@ -82,6 +89,13 @@ def features(
         pause_speed_percentile=cfg["features"]["pause_speed_percentile"],
         min_pause_frames=cfg["features"]["min_pause_frames"],
     )
+    if table.empty:
+        typer.echo("Warning: no feature rows produced (all clips failed segmentation).")
+        out = resolve_path(cfg, "processed_dir") / "features.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        table.to_csv(out, index=False)
+        typer.echo(f"0 rows -> {out}")
+        return
     # carry signer_id + split through for grouped CV
     table = table.merge(idx[["clip_id", "signer_id", "split"]], on="clip_id", how="left")
     out = resolve_path(cfg, "processed_dir") / "features.csv"

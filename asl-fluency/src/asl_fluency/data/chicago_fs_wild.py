@@ -66,7 +66,11 @@ class ClipIndex:
         return df
 
 
-def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> ClipIndex:
+def load_clip_index(
+    raw_dir: str | Path,
+    dataset: str = "chicagofswild",
+    base_dir: str | Path | None = None,
+) -> ClipIndex:
     """Build the clip index for a locally downloaded corpus.
 
     Scans raw_dir for the corpus annotation CSV (ChicagoFSWild.csv /
@@ -74,6 +78,10 @@ def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> Clip
     transcript + video columns) and normalises column names. Clip paths are
     resolved against common frame-extraction layouts (see _resolve_clip_paths);
     note ChicagoFSWild clips are frame *directories*, not video files.
+
+    `base_dir` (usually the project root) makes stored `video_path` values
+    relative to that directory when the clip lives under it, so the emitted
+    index is portable across machines. Paths outside `base_dir` stay absolute.
     """
     raw_dir = Path(raw_dir)
     candidates = sorted(raw_dir.glob("**/*.csv"))
@@ -96,7 +104,7 @@ def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> Clip
             f"No CSV under {raw_dir} had recognisable transcript/video columns. "
             f"Tried: {[c.name for c in candidates]}. Add aliases in _COLUMN_ALIASES."
         )
-    df["video_path"] = _resolve_clip_paths(df, raw_dir)
+    df["video_path"] = _resolve_clip_paths(df, raw_dir, base_dir)
     df["clip_id"] = df["video_path"].map(lambda p: Path(p).name).astype(str)
     if "signer_id" not in df.columns:
         df["signer_id"] = None
@@ -107,13 +115,18 @@ def load_clip_index(raw_dir: str | Path, dataset: str = "chicagofswild") -> Clip
     return ClipIndex(df[keep])
 
 
-def _resolve_clip_paths(df: pd.DataFrame, raw_dir: Path) -> pd.Series:
+def _resolve_clip_paths(
+    df: pd.DataFrame, raw_dir: Path, base_dir: str | Path | None = None
+) -> pd.Series:
     """Map the CSV's relative `filename` to an existing local path.
 
     The CSV stores paths like `aslized/elsie_stecker_0001` relative to the
     frames root, but the nested archives get extracted in different layouts.
     Try the common roots in order; fall back to raw_dir/rel (which will fail
     loudly later if the frames really are missing).
+
+    When `base_dir` is given, paths that lie under it are stored as relative
+    to `base_dir` so the index stays portable across machines.
     """
     roots = [
         raw_dir,
@@ -124,12 +137,21 @@ def _resolve_clip_paths(df: pd.DataFrame, raw_dir: Path) -> pd.Series:
         raw_dir / "ChicagoFSWildPlus",
     ]
     roots = [r for r in roots if r.is_dir()]
+    base = Path(base_dir) if base_dir else None
+
+    def _make_relative(p: Path) -> str:
+        if base is None:
+            return str(p)
+        try:
+            return str(p.relative_to(base))
+        except ValueError:
+            return str(p)
 
     def resolve(rel: str) -> str:
         for root in roots:
             p = root / rel
             if p.exists():
-                return str(p)
-        return str(raw_dir / rel)
+                return _make_relative(p)
+        return _make_relative(raw_dir / rel)
 
     return df["video_path"].map(resolve)

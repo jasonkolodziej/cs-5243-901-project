@@ -1,5 +1,6 @@
 """End-to-end tests on synthetic landmark sequences (no video needed)."""
 
+import os
 from itertools import pairwise
 
 import numpy as np
@@ -171,3 +172,80 @@ class TestAblation:
         })
         out = stratified_metrics(y_true, y_pred, ctx, ["skin_tone"])
         assert set(out["skin_tone"]) == {"light", "dark"}
+
+
+class TestRelativePathResolution:
+    def test_loader_makes_paths_relative_when_under_base_dir(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        frames = tmp_path / "ChicagoFSWild-Frames" / "aslized" / "clip_0001"
+        frames.mkdir(parents=True)
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,aslized/clip_0001,hello,0000\n"
+        )
+        # When base_dir is the parent of tmp_path, the resolved path is under it
+        ci = load_clip_index(tmp_path, base_dir=tmp_path)
+        assert len(ci) == 1
+        row = ci.frame.iloc[0]
+        # Path should be relative to base_dir
+        assert not os.path.isabs(row["video_path"])
+        assert row["video_path"] == str("ChicagoFSWild-Frames/aslized/clip_0001")
+        assert row["transcript"] == "HELLO"
+
+    def test_loader_keeps_absolute_when_outside_base_dir(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        # frames live outside base_dir
+        other = tmp_path / "other" / "frames" / "a" / "clip_0002"
+        other.mkdir(parents=True)
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        (raw_dir / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,a/clip_0002,world,0001\n"
+        )
+        # Create a symlink-ish resolution: raw_dir/a -> other/frames/a
+        (raw_dir / "a").mkdir()
+        (raw_dir / "a" / "clip_0002").mkdir()
+        # Actually simpler: just use base_dir that does NOT contain the resolved path
+        ci = load_clip_index(raw_dir, base_dir=tmp_path / "nowhere")
+        row = ci.frame.iloc[0]
+        # Because the resolved path IS under raw_dir, and raw_dir is NOT under nowhere,
+        # the path stays absolute
+        assert os.path.isabs(row["video_path"])
+
+    def test_loader_defaults_to_absolute_without_base_dir(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        frames = tmp_path / "ChicagoFSWild-Frames" / "aslized" / "clip_0001"
+        frames.mkdir(parents=True)
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,aslized/clip_0001,hello,0000\n"
+        )
+        ci = load_clip_index(tmp_path)  # base_dir defaults to None
+        row = ci.frame.iloc[0]
+        assert os.path.isabs(row["video_path"])
+        assert row["video_path"] == str(frames)
+
+
+class TestFeaturePipelineGuards:
+    def test_build_feature_table_empty_when_no_transcript_matches(self, tmp_path):
+        from asl_fluency.features.pipeline import build_feature_table
+        from asl_fluency.landmarks.extractor import LandmarkSequence, N_LANDMARKS
+        import numpy as np
+
+        lm_dir = tmp_path / "landmarks"
+        lm_dir.mkdir()
+        # save a landmark file for clip "c99" but only ask for "c00" transcript
+        seq = LandmarkSequence("c99", np.zeros((10, N_LANDMARKS, 3), np.float32),
+                               np.ones(10, bool), 30.0)
+        seq.save(lm_dir / "c99.npz")
+        table = build_feature_table(lm_dir, {"c00": "HELLO"})
+        assert table.empty
+
+    def test_build_feature_table_empty_on_empty_dir(self, tmp_path):
+        from asl_fluency.features.pipeline import build_feature_table
+
+        lm_dir = tmp_path / "landmarks"
+        lm_dir.mkdir()
+        table = build_feature_table(lm_dir, {})
+        assert table.empty

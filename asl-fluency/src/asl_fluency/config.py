@@ -11,6 +11,11 @@ import yaml
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "configs" / "default.yaml"
 
 
+def project_root() -> Path:
+    """Absolute path to the project root (the folder containing configs/)."""
+    return DEFAULT_CONFIG_PATH.parents[1]
+
+
 def load_config(path: str | Path | None = None) -> dict[str, Any]:
     """Load a YAML config, falling back to configs/default.yaml.
 

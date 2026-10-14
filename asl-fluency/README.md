@@ -36,11 +36,13 @@ curl -L -o assets/hand_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 ```
 
-## Try it on real video (no dataset download needed)
+## Try it on real video
 
-`data/raw/fs_sample/` ships one real ChicagoFSWild clip (79 frames reassembled to
-`mj_bienvenu_4509.mp4`, transcript "INTERDISCIPLINARY", a fluent signer) plus the full
-`ChicagoFSWild.csv` metadata, so every stage can be smoke-tested on real data:
+Place any fingerspelling video (or a clip extracted from ChicagoFSWild) under
+`data/raw/fs_sample/` and run the demo commands below. A good test clip is
+`gallaudet/mj_bienvenu_4509` from ChicagoFSWild (transcript **INTERDISCIPLINARY**,
+79 frames, fluent signing); once extracted it can be reassembled to
+`data/raw/fs_sample/mj_bienvenu_4509.mp4`.
 
 ```bash
 # single-clip report: landmarks -> letter segmentation -> fluency features
@@ -53,8 +55,7 @@ asl-fluency live --source path/to/clip.mp4 --transcript HELLO --no-display \
   --save-video overlay.mp4                         # headless / file source
 ```
 
-Expected on the sample clip: 100% detection, ~6.5 letters/sec, letter-duration CV ≈ 0.10 —
-fast, highly consistent signing, exactly what a fluent clip should look like.
+Expected on a fluent sample clip: 100% detection, ~6.5 letters/sec, letter-duration CV ≈ 0.10.
 
 The hand selector (`SigningHandSelector`) picks the *most active* hand via fingertip-motion
 EMA — on clips with a visible resting hand this is what keeps features computed on the
