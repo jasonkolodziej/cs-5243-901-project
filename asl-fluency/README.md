@@ -101,6 +101,10 @@ data/raw/frames/<signer>/<clip>/0001.jpg ...
 `ChicagoFSWild.csv` alone is not sufficient; it is metadata only. You must also have
 the extracted clip media (frame directories or videos) on disk.
 
+If `ChicagoFSWild-Frames.tgz` (or `.tar.gz`) is present under `data/raw/` at any depth
+(for example `data/raw/ChicagoFSWild/ChicagoFSWild-Frames.tgz`), `asl-fluency index`
+will auto-extract it into `data/raw/` before resolving clip paths.
+
 `asl-fluency index` now keeps only clips that exist locally. If no clips are found, it
 fails with a setup error explaining that frame extraction is missing.
 

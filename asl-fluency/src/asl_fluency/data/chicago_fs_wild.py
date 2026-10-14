@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import tarfile
 import warnings
 
 import pandas as pd
@@ -83,8 +84,12 @@ def load_clip_index(
     `base_dir` (usually the project root) makes stored `video_path` values
     relative to that directory when the clip lives under it, so the emitted
     index is portable across machines. Paths outside `base_dir` stay absolute.
+
+    If a ChicagoFSWild frames archive is present locally
+    (ChicagoFSWild-Frames.tgz or .tar.gz), it is unpacked automatically.
     """
     raw_dir = Path(raw_dir)
+    _maybe_extract_frames_archives(raw_dir)
     candidates = sorted(raw_dir.glob("**/*.csv"))
     if not candidates:
         raise FileNotFoundError(
@@ -131,6 +136,56 @@ def load_clip_index(
         c for c in ("fps", "n_frames", "split") if c in df.columns
     ]
     return ClipIndex(df[keep])
+
+
+def _maybe_extract_frames_archives(raw_dir: Path) -> None:
+    """Unpack known ChicagoFSWild frame archives when present.
+
+    This is intentionally best-effort and idempotent: if no archive exists,
+    nothing happens; if the destination appears populated, extraction is
+    skipped.
+    """
+    archive_names = (
+        "ChicagoFSWild-Frames.tgz",
+        "ChicagoFSWild-Frames.tar.gz",
+        "ChicagoFSWildPlus-Frames.tgz",
+        "ChicagoFSWildPlus-Frames.tar.gz",
+    )
+    archives: list[Path] = []
+    for name in archive_names:
+        archives.extend(sorted(raw_dir.glob(f"**/{name}")))
+    for archive in archives:
+        _extract_frames_archive_if_needed(archive, raw_dir)
+
+
+def _extract_frames_archive_if_needed(archive_path: Path, raw_dir: Path) -> None:
+    """Safely extract a frame archive to raw_dir if not already unpacked."""
+    stem = archive_path.name
+    if stem.endswith(".tar.gz"):
+        stem = stem[:-7]
+    elif stem.endswith(".tgz"):
+        stem = stem[:-4]
+    expected_root = raw_dir / stem
+
+    if expected_root.is_dir() and any(expected_root.iterdir()):
+        return
+
+    extract_to = raw_dir
+    with tarfile.open(archive_path, "r:gz") as tar:
+        _safe_extract_tar(tar, extract_to)
+
+
+def _safe_extract_tar(tar: tarfile.TarFile, destination: Path) -> None:
+    """Extract tar members while preventing path traversal."""
+    destination = destination.resolve()
+    for member in tar.getmembers():
+        member_path = (destination / member.name).resolve()
+        if not str(member_path).startswith(str(destination)):
+            raise ValueError(
+                f"Unsafe archive member path: {member.name}. "
+                "Refusing to extract outside the target directory."
+            )
+    tar.extractall(path=destination)
 
 
 def _resolve_clip_paths(

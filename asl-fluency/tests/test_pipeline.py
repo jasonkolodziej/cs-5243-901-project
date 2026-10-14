@@ -1,6 +1,7 @@
 """End-to-end tests on synthetic landmark sequences (no video needed)."""
 
 import os
+import tarfile
 from itertools import pairwise
 
 import numpy as np
@@ -91,6 +92,27 @@ class TestFrameDirectorySource:
         ci = load_clip_index(tmp_path)
         assert len(ci) == 1
         assert ci.frame.iloc[0]["clip_id"] == "clip_0001"
+
+    def test_loader_auto_extracts_frames_archive(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        build_root = tmp_path / "build"
+        clip_dir = build_root / "ChicagoFSWild-Frames" / "aslized" / "clip_0001"
+        clip_dir.mkdir(parents=True)
+        (clip_dir / "0001.jpg").write_bytes(b"x")
+
+        archive = tmp_path / "ChicagoFSWild" / "ChicagoFSWild-Frames.tgz"
+        archive.parent.mkdir(parents=True)
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(build_root / "ChicagoFSWild-Frames", arcname="ChicagoFSWild-Frames")
+
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n0,aslized/clip_0001,hello,0000\n"
+        )
+
+        ci = load_clip_index(tmp_path)
+        assert len(ci) == 1
+        assert (tmp_path / "ChicagoFSWild-Frames" / "aslized" / "clip_0001").is_dir()
 
 
 class TestSegmentation:
