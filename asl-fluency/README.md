@@ -153,4 +153,83 @@ src/asl_fluency/            the pipeline package (CLI: asl-fluency)
 data/raw|interim|processed|ratings/
 notebooks/                  exploratory analysis
 tests/                      synthetic end-to-end tests
+
+.
+├── assets/                          # one-time-download binary artifacts (not in git)
+│   └── hand_landmarker.task         # MediaPipe HandLandmarker model (~8 MB)
+│
+├── configs/                         # experiment configuration overrides
+│   └── default.yaml                 # all knobs: paths, model, CV, features, segmentation
+│
+├── data/                            # experiment data — raw, interim, processed, ratings
+│   ├── interim/                     # artefacts produced during pipeline stages
+│   │   ├── .gitkeep
+│   │   ├── clip_index.csv           # per-clip manifest with *relative* video_path
+│   │   └── landmarks/               # per-frame MediaPipe hand landmarks (*.npz)
+│   │
+│   ├── processed/                   # final tables ready for modelling / evaluation
+│   │   └── .gitkeep                 # features.csv, ablation_results.csv, stratified_results.csv
+│   │
+│   ├── ratings/                     # human fluency ratings and optional context
+│   │   ├── .gitkeep
+│   │   ├── clip_context.example.csv # example: per-clip skin_tone / lighting for stratified eval
+│   │   └── ratings.example.csv      # example: long-format rater × clip ratings
+│   │
+│   └── raw/                         # manually-downloaded corpora (not in git)
+│       ├── .gitkeep
+│       ├── ChicagoFSWild/           # annotation CSVs from the official release
+│       │   ├── ChicagoFSWild.csv    # main metadata: filename, label_proc, signer, partition, …
+│       │   ├── HandAnnotation.csv   # hand-annotation metadata
+│       │   ├── README               # official dataset README
+│       │   └── individual.csv       # per-signer demographic info
+│       ├── aslized/                 # extracted frame directories (<signer>/<clip>/0001.jpg)
+│       └── fs_sample/               # drop a single reassembled video here for quick demo runs
+│
+├── notebooks/                       # exploratory analysis (Jupyter / Quarto)
+│   └── .gitkeep
+│
+├── pyproject.toml                   # uv project metadata, deps, scripts, tool config
+├── README.md                        # setup, usage, experiment map, design decisions
+├── TREE.md                          # this file — annotated directory layout
+├── uv.lock                          # reproducible dependency lockfile
+│
+├── src/
+│   └── asl_fluency/                 # main pipeline package (CLI entrypoint: asl-fluency)
+│       ├── __init__.py
+│       ├── cli.py                   # Typer CLI: index, landmarks, features, rating-sheet, …
+│       ├── config.py                # YAML loading, deep-merge, path resolution, project_root()
+│       │
+│       ├── data/                    # dataset loaders & rating utilities
+│       │   ├── __init__.py
+│       │   ├── chicago_fs_wild.py   # ClipIndex, load_clip_index, signer-disjoint split, relative-path logic
+│       │   └── fluency_labels.py    # rating-sheet template, consensus scores, inter-rater loading
+│       │
+│       ├── evaluation/              # metrics, agreement, ablation runner
+│       │   ├── __init__.py
+│       │   ├── ablation.py          # naive vs. kinematic arms, stratified_metrics
+│       │   ├── agreement.py         # Fleiss' kappa, ICC(2,k), Cohen's kappa
+│       │   └── metrics.py           # Spearman/Pearson/MAE + bootstrap CIs
+│       │
+│       ├── features/                # kinematic feature engineering
+│       │   ├── __init__.py
+│       │   ├── kinematics.py        # letters/s, velocity/jerk, pauses, path efficiency, LDJ
+│       │   └── pipeline.py          # compute_feature_row, build_feature_table
+│       │
+│       ├── landmarks/               # MediaPipe hand-landmark extraction
+│       │   ├── __init__.py
+│       │   ├── extractor.py         # HandLandmarker Tasks API, SigningHandSelector, batch_extract
+│       │   ├── live.py              # webcam / video-stream fluency monitor
+│       │   └── quality.py           # tracking-quality covariates
+│       │
+│       ├── models/                  # regressors & optional fused video arm
+│       │   ├── __init__.py
+│       │   ├── baseline.py          # naive speed, ridge, random forest, gradient boosting
+│       │   └── fused.py             # kinematic + raw-video embedding ablation (needs --extra fused)
+│       │
+│       └── segmentation/            # letter-boundary alignment inside a clip
+│           ├── __init__.py
+│           └── aligner.py           # uniform, energy_valley, forced_alignment hook
+│
+└── tests/                           # synthetic end-to-end tests (no video data required)
+    └── test_pipeline.py             # frame-dir capture, loader, segmentation, features, metrics, agreement, ablation
 ```
