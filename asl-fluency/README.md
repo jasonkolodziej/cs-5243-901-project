@@ -148,12 +148,6 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 ## Layout
 
 ```
-configs/default.yaml        all experiment knobs (model, CV, features, paths)
-src/asl_fluency/            the pipeline package (CLI: asl-fluency)
-data/raw|interim|processed|ratings/
-notebooks/                  exploratory analysis
-tests/                      synthetic end-to-end tests
-
 .
 ├── assets/                          # one-time-download binary artifacts (not in git)
 │   └── hand_landmarker.task         # MediaPipe HandLandmarker model (~8 MB)
