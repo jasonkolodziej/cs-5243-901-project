@@ -36,11 +36,29 @@ curl -L -o assets/hand_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 ```
 
-## Try it on real video (no dataset download needed)
+### Platform note: MediaPipe on macOS
 
-`data/raw/fs_sample/` ships one real ChicagoFSWild clip (79 frames reassembled to
-`mj_bienvenu_4509.mp4`, transcript "INTERDISCIPLINARY", a fluent signer) plus the full
-`ChicagoFSWild.csv` metadata, so every stage can be smoke-tested on real data:
+The project depends on MediaPipe's native hand-landmarker runtime. On some macOS
+installations, the native GraphService/Metal initialization aborts before any clip is
+processed, producing the error seen in the issue report:
+
+```
+F ... graph_service.h:139] Check failed: service_ Service is unavailable.
+```
+
+This is a MediaPipe runtime issue in the underlying Metal/AVFoundation stack, not a bad
+model file or a broken project path. In practice, the pipeline is most reliable on a
+Linux/WSL environment or any host where MediaPipe can initialize its native graph service
+correctly. If the command crashes immediately on macOS, the fix is to run the project on a
+supported MediaPipe runtime rather than changing the dataset or CLI arguments.
+
+## Try it on real video
+
+Place any fingerspelling video (or a clip extracted from ChicagoFSWild) under
+`data/raw/fs_sample/` and run the demo commands below. A good test clip is
+`gallaudet/mj_bienvenu_4509` from ChicagoFSWild (transcript **INTERDISCIPLINARY**,
+79 frames, fluent signing); once extracted it can be reassembled to
+`data/raw/fs_sample/mj_bienvenu_4509.mp4`.
 
 ```bash
 # single-clip report: landmarks -> letter segmentation -> fluency features
@@ -53,8 +71,7 @@ asl-fluency live --source path/to/clip.mp4 --transcript HELLO --no-display \
   --save-video overlay.mp4                         # headless / file source
 ```
 
-Expected on the sample clip: 100% detection, ~6.5 letters/sec, letter-duration CV ≈ 0.10 —
-fast, highly consistent signing, exactly what a fluent clip should look like.
+Expected on a fluent sample clip: 100% detection, ~6.5 letters/sec, letter-duration CV ≈ 0.10.
 
 The hand selector (`SigningHandSelector`) picks the *most active* hand via fingertip-motion
 EMA — on clips with a visible resting hand this is what keeps features computed on the
@@ -70,6 +87,31 @@ Download manually into `data/raw/`:
 | ChicagoFSWild+ | 55,232 clips, 260 signers | scale-up if compute allows |
 | WLASL / MS-ASL | isolated signs | hand-pose pretraining only |
 
+**Important: ChicagoFSWild(+) clips are directories of JPEG frames, not video files.**
+The pipeline handles this natively — extract the nested frames archive so clips sit in
+one of these layouts (the loader auto-detects them):
+
+```
+data/raw/ChicagoFSWild.csv                     <- annotation CSV (any depth works)
+data/raw/ChicagoFSWild-Frames/<signer>/<clip>/0001.jpg ...   # or
+data/raw/<signer>/<clip>/0001.jpg ...                        # or
+data/raw/frames/<signer>/<clip>/0001.jpg ...
+```
+
+`ChicagoFSWild.csv` alone is not sufficient; it is metadata only. You must also have
+the extracted clip media (frame directories or videos) on disk.
+
+If `ChicagoFSWild-Frames.tgz` (or `.tar.gz`) is present under `data/raw/` at any depth
+(for example `data/raw/ChicagoFSWild/ChicagoFSWild-Frames.tgz`), `asl-fluency index`
+will auto-extract it into `data/raw/` before resolving clip paths.
+
+`asl-fluency index` now keeps only clips that exist locally. If no clips are found, it
+fails with a setup error explaining that frame extraction is missing.
+
+Frame directories have no native frame rate, so `landmarks.default_fps` (30) is used for
+rate features. Run `asl-fluency demo data/raw/ChicagoFSWild-Frames/<signer>/<clip>
+--transcript WORD` to sanity-check one clip before the batch run.
+
 No dataset has fluency labels — collect a small human-rated subset (1–5 scale,
 instructors or fluent signers) with the built-in rating-sheet tooling.
 
@@ -78,6 +120,9 @@ instructors or fluent signers) with the built-in rating-sheet tooling.
 ```bash
 # 1. index the corpus (signer-disjoint train/val/test split)
 asl-fluency index
+
+# If this reports skipped clips, your extraction is partial; this is expected.
+# It will process only clips that currently exist on disk.
 
 # 2. extract landmarks (data/interim/landmarks/*.npz)
 asl-fluency landmarks            # add --limit 50 for a quick smoke run
