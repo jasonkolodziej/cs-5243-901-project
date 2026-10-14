@@ -19,7 +19,6 @@ Requires the hand landmarker model (one-time download, ~8 MB):
 from __future__ import annotations
 
 import logging
-import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,12 +92,6 @@ def _make_landmarker(model_path: str | Path, max_num_hands: int,
             "  curl -L -o assets/hand_landmarker.task https://storage.googleapis.com/"
             "mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
         )
-    # if platform.system() == "Darwin":
-    #     raise RuntimeError(
-    #         "MediaPipe hand tracking is not stable on this macOS runtime and crashes during "
-    #         "native Metal initialization (DrishtiMetalHelper / graph_service). Run asl-fluency "
-    #         "in Linux/WSL2 or another supported environment instead."
-    #     )
     delegate_enum = BaseOptions.Delegate.GPU if delegate == "gpu" else BaseOptions.Delegate.CPU
     options = HandLandmarkerOptions(
         base_options=BaseOptions(

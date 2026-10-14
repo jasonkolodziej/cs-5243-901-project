@@ -5,7 +5,7 @@ description = "Automated fluency and speed scoring for ASL fingerspelling from h
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "mediapipe>=0.10.14",
+    "mediapipe>=1.1.1",    # 1.0.1 crashes on some macOS Metal runtimes
     "opencv-python>=4.10",
     "numpy>=1.26",
     "pandas>=2.2",
@@ -23,15 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Optional deep-learning stack for the kinematic + raw-video fused model (ablation arm).
-fused = [
-    "torch>=2.3",
-    "torchvision>=0.18",
-]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.5",
-    "ipykernel>=6.29",
-]
+fused = ["torch>=2.3", "torchvision>=0.18"]
+dev = ["pytest>=8.0", "ruff>=0.5", "ipykernel>=6.29"]
 
 [project.scripts]
 asl-fluency = "asl_fluency.cli:app"
@@ -46,11 +39,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 ignore = [
-    "B008",   # typer.Option/Argument in defaults is the standard Typer idiom
+    "B008", # typer.Option/Argument in defaults is the standard Typer idiom
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/asl_fluency/landmarks/extractor.py" = ["BLE001"]  # batch loop must not die on one bad clip
+"src/asl_fluency/landmarks/extractor.py" = [
+    "BLE001",
+] # batch loop must not die on one bad clip
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
