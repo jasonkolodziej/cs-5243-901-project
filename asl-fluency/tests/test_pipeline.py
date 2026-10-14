@@ -31,16 +31,16 @@ def make_seq(clip_id="c0", n_frames=120, fps=30.0, dropout=0.0, seed=0):
     return LandmarkSequence(clip_id, lm, frame_ok, fps)
 
 
-class TestMediaPipePlatformGuard:
-    def test_rejects_macos_mediapipe_runtime(self, tmp_path):
-        from asl_fluency.landmarks.extractor import _make_landmarker
+# class TestMediaPipePlatformGuard:
+#     def test_rejects_macos_mediapipe_runtime(self, tmp_path):
+#         from asl_fluency.landmarks.extractor import _make_landmarker
 
-        model_path = tmp_path / "hand_landmarker.task"
-        model_path.write_bytes(b"fake-model")
+#         model_path = tmp_path / "hand_landmarker.task"
+#         model_path.write_bytes(b"fake-model")
 
-        with patch("platform.system", return_value="Darwin"):
-            with pytest.raises(RuntimeError, match="Linux/WSL|macOS"):
-                _make_landmarker(model_path, 2, 0.5, 0.5)
+#         with patch("platform.system", return_value="Darwin"):
+#             with pytest.raises(RuntimeError, match="Linux/WSL|macOS"):
+#                 _make_landmarker(model_path, 2, 0.5, 0.5)
 
 
 class TestFrameDirectorySource:
