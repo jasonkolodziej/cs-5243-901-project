@@ -19,6 +19,7 @@ Requires the hand landmarker model (one-time download, ~8 MB):
 from __future__ import annotations
 
 import logging
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -75,9 +76,10 @@ class LandmarkSequence:
 
 
 def _make_landmarker(model_path: str | Path, max_num_hands: int,
-                     min_detection_confidence: float, min_tracking_confidence: float):
+                     min_detection_confidence: float, min_tracking_confidence: float,
+                     delegate: str = "cpu"):
     """Build a VIDEO-mode HandLandmarker (mediapipe >= 0.10.14 Tasks API)."""
-    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.core.base_options import BaseOptions
     from mediapipe.tasks.python.vision import (
         HandLandmarker,
         HandLandmarkerOptions,
@@ -91,8 +93,17 @@ def _make_landmarker(model_path: str | Path, max_num_hands: int,
             "  curl -L -o assets/hand_landmarker.task https://storage.googleapis.com/"
             "mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
         )
+    # if platform.system() == "Darwin":
+    #     raise RuntimeError(
+    #         "MediaPipe hand tracking is not stable on this macOS runtime and crashes during "
+    #         "native Metal initialization (DrishtiMetalHelper / graph_service). Run asl-fluency "
+    #         "in Linux/WSL2 or another supported environment instead."
+    #     )
+    delegate_enum = BaseOptions.Delegate.GPU if delegate == "gpu" else BaseOptions.Delegate.CPU
     options = HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(model_path)),
+        base_options=BaseOptions(
+            model_asset_path=str(model_path), delegate=delegate_enum
+        ),
         running_mode=RunningMode.VIDEO,
         num_hands=max_num_hands,
         min_hand_detection_confidence=min_detection_confidence,
@@ -162,6 +173,7 @@ def extract_landmarks(
     max_num_hands: int = 2,
     min_detection_confidence: float = 0.5,
     min_tracking_confidence: float = 0.5,
+    delegate: str = "cpu",
     hand: str = "auto",
     target_fps: float | None = None,
     default_fps: float = 30.0,
@@ -182,7 +194,8 @@ def extract_landmarks(
     selector = SigningHandSelector() if hand == "auto" else None
 
     landmarker = _make_landmarker(
-        model_path, max_num_hands, min_detection_confidence, min_tracking_confidence
+        model_path, max_num_hands, min_detection_confidence, min_tracking_confidence,
+        delegate=delegate,
     )
     with landmarker:
         idx = 0

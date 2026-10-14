@@ -6,45 +6,46 @@ project:
   seed: 42
 
 paths:
-  raw_dir: data/raw                # ChicagoFSWild / ChicagoFSWild+ videos live here
-  interim_dir: data/interim        # extracted landmark sequences (.npz)
-  processed_dir: data/processed    # feature tables, trained models
-  ratings_dir: data/ratings        # human fluency ratings CSVs
+  raw_dir: data/raw # ChicagoFSWild / ChicagoFSWild+ videos live here
+  interim_dir: data/interim # extracted landmark sequences (.npz)
+  processed_dir: data/processed # feature tables, trained models
+  ratings_dir: data/ratings # human fluency ratings CSVs
 
 landmarks:
-  backend: mediapipe               # currently only "mediapipe"
-  model_path: assets/hand_landmarker.task   # see README for the one-time download
+  backend: mediapipe # currently only "mediapipe"
+  model_path: assets/hand_landmarker.task # see README for the one-time download
+  delegate: cpu # cpu | gpu — use cpu to avoid Metal/CUDA driver issues
   static_image_mode: false
-  max_num_hands: 2                 # fingerspelling is dominant-hand; 2 lets us pick it
+  max_num_hands: 2 # fingerspelling is dominant-hand; 2 lets us pick it
   min_detection_confidence: 0.5
   min_tracking_confidence: 0.5
-  target_fps: null                 # null = keep native fps
-  default_fps: 30.0                # frame directories (ChicagoFSWild) have no native fps
-  hand: auto                       # auto | left | right  (which hand is the signing hand)
+  target_fps: null # null = keep native fps
+  default_fps: 30.0 # frame directories (ChicagoFSWild) have no native fps
+  hand: auto # auto | left | right  (which hand is the signing hand)
 
 segmentation:
-  method: uniform                  # uniform | energy_valley | forced_alignment
+  method: uniform # uniform | energy_valley | forced_alignment
   # uniform: split clip evenly across transcript letters (baseline, no extra model)
   # energy_valley: refine uniform boundaries to local minima of wrist speed
   # forced_alignment: hook for an external CTC recognizer (not bundled)
   refine_radius_frames: 6
 
 features:
-  smooth_window_frames: 5          # Savitzky-Golay window for velocity/jerk
+  smooth_window_frames: 5 # Savitzky-Golay window for velocity/jerk
   smooth_polyorder: 2
-  pause_speed_percentile: 15       # wrist speed below this percentile of clip = pause
+  pause_speed_percentile: 15 # wrist speed below this percentile of clip = pause
   min_pause_frames: 3
 
 labels:
-  rating_scale: [1, 5]             # 1-5 fluency scale from the proposal
+  rating_scale: [1, 5] # 1-5 fluency scale from the proposal
   min_raters_per_clip: 3
 
 model:
-  kind: ridge                      # naive_speed | ridge | random_forest | gradient_boosting
-  cv: signer_group                 # signer_group (signer-disjoint) | kfold
+  kind: ridge # naive_speed | ridge | random_forest | gradient_boosting
+  cv: signer_group # signer_group (signer-disjoint) | kfold
   n_splits: 5
-  feature_set: full                # naive | kinematic | full  (ablation arms)
+  feature_set: full # naive | kinematic | full  (ablation arms)
 
 evaluation:
-  stratify_by: [skin_tone, lighting]   # fairness slices from proposal Section 7
+  stratify_by: [skin_tone, lighting] # fairness slices from proposal Section 7
   bootstrap_iters: 1000

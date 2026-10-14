@@ -48,6 +48,7 @@ class LiveFluencyMonitor:
     max_num_hands: int = 2
     min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
+    delegate: str = "cpu"
     ema_alpha: float = 0.3
     _landmarker: object = field(init=False, default=None)
     _frames: list = field(init=False, default_factory=list)
@@ -60,6 +61,7 @@ class LiveFluencyMonitor:
         self._landmarker = _make_landmarker(
             self.model_path, self.max_num_hands,
             self.min_detection_confidence, self.min_tracking_confidence,
+            delegate=self.delegate,
         )
         self._selector = SigningHandSelector()
 

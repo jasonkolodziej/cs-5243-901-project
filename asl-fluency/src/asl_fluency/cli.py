@@ -247,6 +247,7 @@ def live(
         max_num_hands=lm_cfg.get("max_num_hands", 2),
         min_detection_confidence=lm_cfg.get("min_detection_confidence", 0.5),
         min_tracking_confidence=lm_cfg.get("min_tracking_confidence", 0.5),
+        delegate=lm_cfg.get("delegate", "cpu"),
     )
     src: int | str = int(source) if source.isdigit() else source
     seq = run_live(src, monitor, display=display, save_video=save_video)

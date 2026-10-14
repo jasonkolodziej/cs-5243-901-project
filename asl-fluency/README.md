@@ -36,6 +36,22 @@ curl -L -o assets/hand_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
 ```
 
+### Platform note: MediaPipe on macOS
+
+The project depends on MediaPipe's native hand-landmarker runtime. On some macOS
+installations, the native GraphService/Metal initialization aborts before any clip is
+processed, producing the error seen in the issue report:
+
+```
+F ... graph_service.h:139] Check failed: service_ Service is unavailable.
+```
+
+This is a MediaPipe runtime issue in the underlying Metal/AVFoundation stack, not a bad
+model file or a broken project path. In practice, the pipeline is most reliable on a
+Linux/WSL environment or any host where MediaPipe can initialize its native graph service
+correctly. If the command crashes immediately on macOS, the fix is to run the project on a
+supported MediaPipe runtime rather than changing the dataset or CLI arguments.
+
 ## Try it on real video
 
 Place any fingerspelling video (or a clip extracted from ChicagoFSWild) under
