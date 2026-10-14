@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import warnings
 
 import pandas as pd
 
@@ -104,7 +105,24 @@ def load_clip_index(
             f"No CSV under {raw_dir} had recognisable transcript/video columns. "
             f"Tried: {[c.name for c in candidates]}. Add aliases in _COLUMN_ALIASES."
         )
-    df["video_path"] = _resolve_clip_paths(df, raw_dir, base_dir)
+    resolved = _resolve_clip_paths(df, raw_dir, base_dir)
+    found = int(resolved["exists"].sum())
+    total = int(len(resolved))
+    if found == 0:
+        raise FileNotFoundError(
+            "Found annotation CSV, but no clip frames/video files were found. "
+            "Download/extract ChicagoFSWild-Frames.tgz (or equivalent) under data/raw so "
+            "paths like 'aslized/<clip>/0001.jpg' exist."
+        )
+    if found < total:
+        missing = total - found
+        warnings.warn(
+            f"Skipping {missing} clips with missing local media; using {found}/{total} available clips.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    df = df.loc[resolved["exists"]].copy()
+    df["video_path"] = resolved.loc[resolved["exists"], "video_path"].to_numpy()
     df["clip_id"] = df["video_path"].map(lambda p: Path(p).name).astype(str)
     if "signer_id" not in df.columns:
         df["signer_id"] = None
@@ -117,7 +135,7 @@ def load_clip_index(
 
 def _resolve_clip_paths(
     df: pd.DataFrame, raw_dir: Path, base_dir: str | Path | None = None
-) -> pd.Series:
+) -> pd.DataFrame:
     """Map the CSV's relative `filename` to an existing local path.
 
     The CSV stores paths like `aslized/elsie_stecker_0001` relative to the
@@ -130,11 +148,16 @@ def _resolve_clip_paths(
     """
     roots = [
         raw_dir,
+        raw_dir / "aslized",
+        raw_dir / "frames",
         raw_dir / "ChicagoFSWild-Frames",
         raw_dir / "ChicagoFSWildPlus-Frames",
-        raw_dir / "frames",
         raw_dir / "ChicagoFSWild",
+        raw_dir / "ChicagoFSWild" / "aslized",
+        raw_dir / "ChicagoFSWild" / "frames",
         raw_dir / "ChicagoFSWildPlus",
+        raw_dir / "ChicagoFSWildPlus" / "aslized",
+        raw_dir / "ChicagoFSWildPlus" / "frames",
     ]
     roots = [r for r in roots if r.is_dir()]
     base = Path(base_dir) if base_dir else None
@@ -147,11 +170,36 @@ def _resolve_clip_paths(
         except ValueError:
             return str(p)
 
-    def resolve(rel: str) -> str:
-        for root in roots:
-            p = root / rel
-            if p.exists():
-                return _make_relative(p)
-        return _make_relative(raw_dir / rel)
+    def _relative_variants(rel: str) -> list[Path]:
+        p = Path(rel)
+        variants = [p]
+        if p.parts and p.parts[0].lower() in {"aslized", "frames"}:
+            variants.append(Path(*p.parts[1:]))
+        # preserve order while removing duplicates
+        unique = []
+        seen = set()
+        for v in variants:
+            key = str(v)
+            if key not in seen:
+                seen.add(key)
+                unique.append(v)
+        return unique
 
-    return df["video_path"].map(resolve)
+    def resolve(rel: str) -> tuple[str, bool]:
+        rel_variants = _relative_variants(rel)
+        for root in roots:
+            for rel_path in rel_variants:
+                p = root / rel_path
+                if p.exists():
+                    return _make_relative(p), True
+        fallback = raw_dir / rel
+        return _make_relative(fallback), fallback.exists()
+
+    resolved = df["video_path"].map(resolve)
+    return pd.DataFrame(
+        {
+            "video_path": resolved.map(lambda t: t[0]),
+            "exists": resolved.map(lambda t: t[1]),
+        },
+        index=df.index,
+    )

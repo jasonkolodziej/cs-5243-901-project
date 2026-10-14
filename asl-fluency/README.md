@@ -98,6 +98,12 @@ data/raw/<signer>/<clip>/0001.jpg ...                        # or
 data/raw/frames/<signer>/<clip>/0001.jpg ...
 ```
 
+`ChicagoFSWild.csv` alone is not sufficient; it is metadata only. You must also have
+the extracted clip media (frame directories or videos) on disk.
+
+`asl-fluency index` now keeps only clips that exist locally. If no clips are found, it
+fails with a setup error explaining that frame extraction is missing.
+
 Frame directories have no native frame rate, so `landmarks.default_fps` (30) is used for
 rate features. Run `asl-fluency demo data/raw/ChicagoFSWild-Frames/<signer>/<clip>
 --transcript WORD` to sanity-check one clip before the batch run.
@@ -110,6 +116,9 @@ instructors or fluent signers) with the built-in rating-sheet tooling.
 ```bash
 # 1. index the corpus (signer-disjoint train/val/test split)
 asl-fluency index
+
+# If this reports skipped clips, your extraction is partial; this is expected.
+# It will process only clips that currently exist on disk.
 
 # 2. extract landmarks (data/interim/landmarks/*.npz)
 asl-fluency landmarks            # add --limit 50 for a quick smoke run

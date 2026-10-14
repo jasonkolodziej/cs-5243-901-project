@@ -69,12 +69,28 @@ class TestFrameDirectorySource:
 
         # individual.csv has no transcript/video columns -> must not be picked
         (tmp_path / "individual.csv").write_text("signer,age\n0000,30\n")
+        clip_dir = tmp_path / "a" / "b_0001"
+        clip_dir.mkdir(parents=True)
         (tmp_path / "ChicagoFSWild.csv").write_text(
             ",filename,label_proc,signer\n0,a/b_0001,hi,0000\n"
         )
         ci = load_clip_index(tmp_path)
         assert len(ci) == 1
         assert ci.frame.iloc[0]["transcript"] == "HI"
+
+    def test_loader_drops_missing_clips_when_partial_extract(self, tmp_path):
+        from asl_fluency.data.chicago_fs_wild import load_clip_index
+
+        present = tmp_path / "ChicagoFSWild-Frames" / "aslized" / "clip_0001"
+        present.mkdir(parents=True)
+        (tmp_path / "ChicagoFSWild.csv").write_text(
+            ",filename,label_proc,signer\n"
+            "0,aslized/clip_0001,hello,0000\n"
+            "1,aslized/clip_9999,world,0001\n"
+        )
+        ci = load_clip_index(tmp_path)
+        assert len(ci) == 1
+        assert ci.frame.iloc[0]["clip_id"] == "clip_0001"
 
 
 class TestSegmentation:
