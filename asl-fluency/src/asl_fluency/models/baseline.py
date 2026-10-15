@@ -40,28 +40,37 @@ class NaiveSpeedBaseline:
         return self._lr.predict(X[["letters_per_second"]])
 
 
+class SklearnRegressor:
+    """StandardScaler + sklearn regressor over a fixed feature-set column list.
+
+    Module-level (not a closure) so fitted instances are picklable — the
+    `train` command persists them with joblib.
+    """
+
+    def __init__(self, estimator, cols: list[str]) -> None:
+        self.cols = cols
+        self.est = make_pipeline(StandardScaler(), estimator)
+
+    def fit(self, X: pd.DataFrame, y: np.ndarray) -> SklearnRegressor:
+        self.est.fit(X[self.cols].to_numpy(dtype=float), y)
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return self.est.predict(X[self.cols].to_numpy(dtype=float))
+
+
 def make_model(kind: str, feature_set: str = "kinematic", seed: int = 42):
     """Factory returning an unfitted model for the given config."""
     cols = FEATURE_SETS[feature_set]
 
     if kind == "naive_speed":
         return NaiveSpeedBaseline()
-
-    class _Reg:
-        def __init__(self, est):
-            self.est = make_pipeline(StandardScaler(), est)
-
-        def fit(self, X, y):
-            self.est.fit(X[cols].to_numpy(dtype=float), y)
-            return self
-
-        def predict(self, X):
-            return self.est.predict(X[cols].to_numpy(dtype=float))
-
     if kind == "ridge":
-        return _Reg(Ridge(alpha=1.0))
+        return SklearnRegressor(Ridge(alpha=1.0), cols)
     if kind == "random_forest":
-        return _Reg(RandomForestRegressor(n_estimators=300, random_state=seed, n_jobs=-1))
+        return SklearnRegressor(
+            RandomForestRegressor(n_estimators=300, random_state=seed, n_jobs=-1), cols
+        )
     if kind == "gradient_boosting":
-        return _Reg(GradientBoostingRegressor(random_state=seed))
+        return SklearnRegressor(GradientBoostingRegressor(random_state=seed), cols)
     raise ValueError(f"unknown model kind: {kind}")

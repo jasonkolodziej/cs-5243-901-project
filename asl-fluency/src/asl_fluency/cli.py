@@ -6,8 +6,12 @@
     asl-fluency ai-rate      AI-judge pre-scores (stratification aid, NOT ground truth)
     asl-fluency rating-sheet stratified intake sheet for human raters (batchable)
     asl-fluency rate         browser UI: watch clips, click 1-5, saves to the sheet
+    asl-fluency label-boundaries  browser UI: mark per-letter frame spans
+    asl-fluency boundary-sensitivity  how much does boundary error hurt each feature?
     asl-fluency agreement    inter-rater agreement on collected ratings
     asl-fluency evaluate     ablation + metrics against human ratings
+    asl-fluency train        fit the chosen arm on all rated data, persist artifact
+    asl-fluency score        apply a persisted scorer to new clips / feature rows
 """
 
 from __future__ import annotations
@@ -321,6 +325,217 @@ def ai_rate(
         work_dir=resolve_path(cfg, "interim_dir") / "ai_clips", limit=limit,
     )
     typer.echo(f"{len(df)} AI-rated rows (rater '{rater_id}') -> {out}")
+
+
+@app.command()
+def label_boundaries(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    clips_csv: Path | None = typer.Option(
+        None, "--clips", help="CSV with a clip_id column (default: the intake sheet)"
+    ),
+    out: Path | None = typer.Option(
+        None, help="default: data/ratings/boundary_labels.csv"
+    ),
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8766),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Browser UI for hand-labeling per-letter frame spans (Gap 1 ground truth).
+
+    Labels the same clips that get fluency ratings (default: the intake
+    sheet). Scrub the flipbook, click the joint between two letters to set
+    that boundary to the current frame; spans auto-save per change. Start
+    from an even split and adjust — much faster than marking from scratch.
+    """
+    import webbrowser
+
+    from .data.ratings_ui import serve
+
+    cfg = load_config(config)
+    ratings_dir = resolve_path(cfg, "ratings_dir")
+    clips_csv = clips_csv or ratings_dir / "ratings_intake.csv"
+    out = out or ratings_dir / "boundary_labels.csv"
+    if not Path(clips_csv).exists():
+        raise typer.BadParameter(f"{clips_csv} not found — nothing to label.")
+    wanted = pd.read_csv(clips_csv, dtype={"clip_id": str})["clip_id"].unique()
+
+    idx = pd.read_csv(resolve_path(cfg, "interim_dir") / "clip_index.csv",
+                      dtype={"clip_id": str})
+    transcripts = dict(zip(idx["clip_id"], idx["transcript"]))
+    paths = _load_clip_paths(cfg)
+    clips = {c: paths[c] for c in wanted if c in paths and c in transcripts}
+    missing = set(wanted) - set(clips)
+    if missing:
+        typer.echo(f"Warning: {len(missing)} clips missing media or transcript; skipped.")
+
+    fps = float(cfg["landmarks"].get("default_fps", 30.0))
+    server = serve(None, clips, host=host, port=port, default_fps=fps,
+                   mode="boundaries", boundary_path=out, transcripts=transcripts)
+    url = f"http://{host}:{port}/"
+    typer.echo(f"Boundary-labeling UI at {url}  (Ctrl+C to stop; saves per change)")
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        typer.echo(f"boundary labels saved in {out}")
+
+
+@app.command()
+def boundary_sensitivity(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    jitters: str = typer.Option("2,4,6", help="comma-separated frame jitter levels"),
+    reps: int = typer.Option(5, help="jitter repetitions per level (averaged)"),
+    seg_method: str | None = typer.Option(None, help="default: config segmentation.method"),
+    limit: int | None = typer.Option(None, help="analyze at most N clips"),
+) -> None:
+    """How much does boundary error hurt each feature? (Gap 1, step 2)
+
+    Perturbs letter boundaries with ±j-frame jitter, recomputes features, and
+    reports Spearman(perturbed vs. unperturbed) per feature. Features near
+    1.0 need no better aligner; features that collapse are aligner artifacts
+    or set the alignment-quality bar for a CTC aligner.
+    """
+    from .evaluation.boundary_sensitivity import sensitivity_report
+
+    cfg = load_config(config)
+    idx = pd.read_csv(resolve_path(cfg, "interim_dir") / "clip_index.csv",
+                      dtype={"clip_id": str})
+    transcripts = dict(zip(idx["clip_id"], idx["transcript"]))
+    levels = tuple(int(x) for x in jitters.split(","))
+    report = sensitivity_report(
+        resolve_path(cfg, "interim_dir") / "landmarks",
+        transcripts,
+        jitters=levels,
+        reps=reps,
+        seg_method=seg_method or cfg["segmentation"]["method"],
+        seed=cfg["project"]["seed"],
+        limit=limit,
+        smooth_window=cfg["features"]["smooth_window_frames"],
+        smooth_polyorder=cfg["features"]["smooth_polyorder"],
+        pause_speed_percentile=cfg["features"]["pause_speed_percentile"],
+        min_pause_frames=cfg["features"]["min_pause_frames"],
+    )
+    if report.empty:
+        typer.echo("no clips analyzed — run `asl-fluency landmarks` first.")
+        raise typer.Exit(code=1)
+    n_clips = report.attrs.get("n_clips", 0)
+    n_dropped = report.attrs.get("n_dropped", 0)
+    typer.echo(
+        f"analyzed {n_clips} clips"
+        + (f" ({n_dropped} excluded: NaN base features)" if n_dropped else "")
+    )
+    typer.echo(report.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    out = resolve_path(cfg, "processed_dir") / "boundary_sensitivity.csv"
+    report.to_csv(out, index=False)
+    fragile = report[report["min_rho"] < 0.8]["feature"].tolist()
+    if fragile:
+        typer.echo(f"\nfragile features (min rho < 0.8): {', '.join(fragile)}")
+    typer.echo(f"report -> {out}")
+
+
+@app.command()
+def train(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ratings: Path | None = typer.Option(
+        None, help="default: data/ratings/ratings_intake.csv"
+    ),
+    kind: str | None = typer.Option(
+        None, help="naive_speed | ridge | random_forest | gradient_boosting (default: config)"
+    ),
+    feature_set: str | None = typer.Option(
+        None, help="naive | kinematic | full (default: config)"
+    ),
+    out: Path | None = typer.Option(
+        None, help="default: data/processed/fluency_scorer.joblib"
+    ),
+) -> None:
+    """Fit the chosen arm on ALL rated data and persist the scorer artifact.
+
+    Run this AFTER `evaluate` has identified the winning arm via CV — the
+    artifact inherits the small-sample caveats (Section 7): a research
+    scorer, validated by the cross-validated metrics, not production.
+    """
+    from .data.fluency_labels import consensus_scores, load_ratings
+    from .models.persist import fit_scorer, save_scorer
+
+    cfg = load_config(config)
+    ratings = ratings or resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
+    scale = tuple(cfg["labels"]["rating_scale"])
+    y = consensus_scores(load_ratings(ratings, scale))  # human-only consensus
+    feats = pd.read_csv(resolve_path(cfg, "processed_dir") / "features.csv",
+                        dtype={"clip_id": str})
+
+    kind = kind or cfg["model"]["kind"]
+    feature_set = feature_set or cfg["model"]["feature_set"]
+    model, labeled = fit_scorer(feats, y, kind, feature_set,
+                                seed=cfg["project"]["seed"])
+    out = out or resolve_path(cfg, "processed_dir") / "fluency_scorer.joblib"
+    save_scorer(model, out, kind=kind, feature_set=feature_set,
+                n_train_clips=len(labeled), rating_scale=scale)
+    typer.echo(f"trained {kind}/{feature_set} on {len(labeled)} rated clips -> {out}")
+    typer.echo("validate with `evaluate` CV metrics; apply with `asl-fluency score`.")
+
+
+@app.command()
+def score(
+    clip: Path | None = typer.Argument(
+        None, help="a clip (frame dir or video) to score; omit with --from-features"
+    ),
+    transcript: str | None = typer.Option(None, help="spelled word, required for clip scoring"),
+    from_features: bool = typer.Option(
+        False, "--from-features", help="score every row of features.csv instead"
+    ),
+    model_path: Path | None = typer.Option(
+        None, "--model", help="default: data/processed/fluency_scorer.joblib"
+    ),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Apply a persisted scorer (from `train`) to new data."""
+    from .models.persist import load_scorer, predict_scores
+
+    cfg = load_config(config)
+    model_path = model_path or resolve_path(cfg, "processed_dir") / "fluency_scorer.joblib"
+    if not model_path.exists():
+        raise typer.BadParameter(f"{model_path} not found — run `asl-fluency train` first.")
+    artifact = load_scorer(model_path)
+
+    if from_features:
+        feats = pd.read_csv(resolve_path(cfg, "processed_dir") / "features.csv",
+                            dtype={"clip_id": str})
+        preds = predict_scores(artifact, feats)
+        out = resolve_path(cfg, "processed_dir") / "scored_features.csv"
+        preds.rename_axis("clip_id").reset_index().to_csv(out, index=False)
+        typer.echo(preds.describe().to_string())
+        typer.echo(f"scores -> {out}")
+        return
+
+    if clip is None or transcript is None:
+        raise typer.BadParameter("score a clip: asl-fluency score CLIP --transcript WORD")
+    from .features.pipeline import compute_feature_row
+    from .landmarks.extractor import extract_landmarks
+
+    lm_cfg = dict(cfg["landmarks"])
+    landmarker_path = _project_path(lm_cfg.pop("model_path", None), cfg)
+    lm_cfg.pop("backend", None)
+    lm_cfg.pop("static_image_mode", None)
+    seq = extract_landmarks(clip, clip.stem, model_path=landmarker_path, **lm_cfg)
+    row = compute_feature_row(
+        seq, transcript,
+        seg_method=cfg["segmentation"]["method"],
+        refine_radius=cfg["segmentation"]["refine_radius_frames"],
+        smooth_window=cfg["features"]["smooth_window_frames"],
+        smooth_polyorder=cfg["features"]["smooth_polyorder"],
+        pause_speed_percentile=cfg["features"]["pause_speed_percentile"],
+        min_pause_frames=cfg["features"]["min_pause_frames"],
+    )
+    pred = predict_scores(artifact, pd.DataFrame([row]))
+    typer.echo(f"{clip.stem}: predicted fluency {pred.iloc[0]:.2f} "
+               f"({artifact['kind']}/{artifact['feature_set']}, "
+               f"trained on {artifact['n_train_clips']} clips)")
 
 
 @app.command()

@@ -165,6 +165,18 @@ asl-fluency agreement data/ratings/ratings_intake.csv
 #    plus stratified metrics if data/ratings/clip_context.csv exists.
 #    AI-judge (vlm_*) rows are automatically excluded from the consensus.
 asl-fluency evaluate data/ratings/ratings_intake.csv
+
+# 9. boundary ground truth + sensitivity (Roadmap Gap 1): label letter spans
+#    on the same rated clips in the browser, then measure how much boundary
+#    error would hurt each feature
+asl-fluency label-boundaries          # saves data/ratings/boundary_labels.csv
+asl-fluency boundary-sensitivity      # -> data/processed/boundary_sensitivity.csv
+
+# 10. once `evaluate` has picked a winning arm: fit it on all rated data and
+#     persist the scorer, then apply it to new clips / the whole feature table
+asl-fluency train --kind ridge --feature-set kinematic
+asl-fluency score data/raw/fs_sample/mj_bienvenu_4509.mp4 --transcript INTERDISCIPLINARY
+asl-fluency score --from-features     # score every row of features.csv
 ```
 
 Ratings format (long CSV, one row per rater × clip) and the optional
@@ -177,7 +189,7 @@ evaluation) are exemplified in `data/ratings/*.example.csv`.
 |---|---|
 | RQ / hypothesis test (kinematics vs. naive speed) | `evaluation/ablation.py` arms `naive_speed_only` vs. `kinematic_*` |
 | Step 1 landmarks | `landmarks/extractor.py` (Tasks API, `SigningHandSelector`), `landmarks/live.py` (webcam/stream) |
-| Step 2 letter boundaries | `segmentation/aligner.py` (`uniform` + `energy_valley` shipped; `forced_alignment` is a stub hook — see Roadmap Gap 1) |
+| Step 2 letter boundaries | `segmentation/aligner.py` (`uniform` + `energy_valley` shipped; `forced_alignment` is a stub hook — see Roadmap Gap 1); ground truth via `asl-fluency label-boundaries`, error tolerance via `asl-fluency boundary-sensitivity` |
 | Step 3 fluency features | `features/kinematics.py` (letters/s, transition velocity/jerk, pauses, log dimensionless jerk, path efficiency) |
 | Step 4 learned scorer | `models/baseline.py`, `models/fused.py` (fusion arm, `--extra fused`; deferred — see Roadmap Gap 2) |
 | Step 5 human validation | `data/fluency_labels.py` (stratified sampling, human-only consensus), `asl-fluency rating-sheet` + `asl-fluency rate` (browser UI) |
@@ -203,14 +215,19 @@ actually hurt my features?"**
 
 1. Hand-label letter boundaries on ~30–50 clips (ideally the same clips that
    get fluency ratings — one session serves both): `(clip_id, letter,
-   start_frame, end_frame)` CSV under `data/ratings/`. The browser rating UI's
-   clip-serving/flipbook machinery is the natural base for a boundary-marking
-   mode.
-2. **Sensitivity analysis** (new `boundary-sensitivity` command, from existing
-   parts): jitter uniform/energy-valley boundaries by ±2/±4/±6 frames,
-   recompute features, and rank-correlate each feature against its unperturbed
-   self. Features that survive jitter need no better aligner; features that
+   start_frame, end_frame)` CSV under `data/ratings/`. **Tooling shipped:**
+   `asl-fluency label-boundaries` opens the browser UI (scrub the flipbook,
+   click the joint between letters; starts from an even split, auto-saves to
+   `boundary_labels.csv`).
+2. **Sensitivity analysis — shipped** as `asl-fluency boundary-sensitivity`:
+   jitters uniform/energy-valley boundaries by ±2/±4/±6 frames, recomputes
+   features, and rank-correlates each feature against its unperturbed self.
+   Features that survive jitter need no better aligner; features that
    collapse set the alignment quality bar. This may kill the whole problem.
+   First look on 20 real clips: whole-clip features (LDJ, pauses, path
+   efficiency) are perfectly robust; `trans_*` statistics degrade gracefully;
+   `letter_dur_std_s` / `letter_dur_cv` collapse (near-artifacts under
+   uniform segmentation).
 3. Only if needed: **CTC forced alignment** — train a letter recognizer on
    *landmark sequences* (not pixels) over ChicagoFSWild+ (clip-level
    transcripts, no frame labels: exactly the CTC setting), then Viterbi-align
@@ -244,11 +261,13 @@ augment only in fluency-preserving ways (brightness, crop, horizontal jitter —
 never speed or temporal warping, which changes the very quantity raters
 scored).
 
-### Also planned
+### Also shipped
 
 - `train` / `score` commands: `evaluate` fits models only inside CV folds and
-  discards them; `train` will fit the winning arm on all rated data and
-  persist it with joblib, `score` will apply the artifact to new clips.
+  discards them; `train` fits the chosen arm on all rated data and persists
+  it to `data/processed/fluency_scorer.joblib` (joblib), and `score` applies
+  the artifact to a new clip (`--transcript`) or the whole feature table
+  (`--from-features`).
 
 ### Suggested overall order
 
@@ -335,12 +354,14 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       │   ├── __init__.py
 │       │   ├── chicago_fs_wild.py   # ClipIndex, load_clip_index, signer-disjoint split, relative-path logic
 │       │   ├── fluency_labels.py    # stratified sampling, rating sheets, human-only consensus, save_rating
-│       │   └── ratings_ui.py        # stdlib browser UI: flipbook/video player, 1-5 capture, per-rater order
+│       │   ├── boundary_labels.py   # hand-labeled letter spans (Gap 1 ground truth) schema + storage
+│       │   └── ratings_ui.py        # stdlib browser UIs: fluency rating + boundary labeling
 │       │
 │       ├── evaluation/              # metrics, agreement, ablation runner
 │       │   ├── __init__.py
 │       │   ├── ablation.py          # naive vs. kinematic arms, stratified_metrics
 │       │   ├── agreement.py         # Fleiss' kappa, ICC(2,k), Cohen's kappa
+│       │   ├── boundary_sensitivity.py  # boundary-jitter feature robustness (Gap 1)
 │       │   └── metrics.py           # Spearman/Pearson/MAE + bootstrap CIs
 │       │
 │       ├── features/                # kinematic feature engineering
@@ -357,6 +378,7 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       ├── models/                  # regressors & optional fused video arm
 │       │   ├── __init__.py
 │       │   ├── baseline.py          # naive speed, ridge, random forest, gradient boosting
+│       │   ├── persist.py           # fit/persist/load the final scorer (train/score)
 │       │   └── fused.py             # kinematic + raw-video embedding ablation (needs --extra fused)
 │       │
 │       └── segmentation/            # letter-boundary alignment inside a clip

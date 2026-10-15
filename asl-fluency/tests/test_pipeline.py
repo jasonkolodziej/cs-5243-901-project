@@ -530,3 +530,222 @@ class TestAIJudge:
 
         p = build_prompt()
         assert "1-5" in p and "fluency" in p.lower()
+
+
+class TestBoundarySensitivity:
+    def _landmark_dir(self, tmp_path, n=6):
+        lm_dir = tmp_path / "landmarks"
+        lm_dir.mkdir()
+        transcripts = {}
+        for i in range(n):
+            seq = make_seq(f"c{i}", n_frames=90, seed=i)
+            seq.save(lm_dir / f"c{i}.npz")
+            transcripts[f"c{i}"] = "HELLO"
+        return lm_dir, transcripts
+
+    def test_jitter_spans_identity_at_zero(self):
+        from asl_fluency.evaluation.boundary_sensitivity import jitter_spans
+
+        spans = [(0, 10, "A"), (10, 20, "B"), (20, 30, "C")]
+        assert jitter_spans(spans, 0, np.random.default_rng(0)) == spans
+
+    def test_jitter_spans_stay_ordered(self):
+        from asl_fluency.evaluation.boundary_sensitivity import jitter_spans
+
+        spans = [(0, 11, "A"), (11, 19, "B"), (19, 30, "C")]
+        for seed in range(20):
+            out = jitter_spans(spans, 6, np.random.default_rng(seed))
+            assert out[0][0] == 0 and out[-1][1] == 30  # endpoints fixed
+            for (s1, e1, _), (s2, e2, _) in pairwise(out):
+                assert s1 < e1 <= s2
+
+    def test_report_shape_and_robust_features(self, tmp_path):
+        from asl_fluency.evaluation.boundary_sensitivity import sensitivity_report
+
+        lm_dir, transcripts = self._landmark_dir(tmp_path)
+        rep = sensitivity_report(lm_dir, transcripts, jitters=(2,), reps=2)
+        assert list(rep.columns) == ["feature", "rho_jit2", "min_rho"]
+        assert len(rep) == len(KINEMATIC_FEATURES)
+        # whole-clip features are boundary-independent: must be perfectly robust
+        ldj = rep.set_index("feature").loc["log_dimless_jerk", "rho_jit2"]
+        assert ldj == pytest.approx(1.0)
+
+    def test_nan_clips_excluded_not_poisoning(self, tmp_path):
+        """One sparse clip (NaN base features) must not NaN out whole columns."""
+        from asl_fluency.evaluation.boundary_sensitivity import sensitivity_report
+
+        lm_dir, transcripts = self._landmark_dir(tmp_path)
+        # add a sparse clip: passes the segmentation gate but too sparse to
+        # smooth -> NaN base features
+        n = 60
+        lm = np.zeros((n, N_LANDMARKS, 3), dtype=np.float32)
+        frame_ok = np.zeros(n, bool)
+        frame_ok[[10, 30, 50]] = True
+        lm[~frame_ok] = np.nan
+        LandmarkSequence("sparse", lm, frame_ok, 30.0).save(lm_dir / "sparse.npz")
+        transcripts["sparse"] = "AB"
+
+        rep = sensitivity_report(lm_dir, transcripts, jitters=(2,), reps=2)
+        assert rep.attrs["n_dropped"] == 1
+        assert rep.attrs["n_clips"] == 6
+        ldj = rep.set_index("feature").loc["log_dimless_jerk", "rho_jit2"]
+        assert ldj == pytest.approx(1.0)  # finite, not poisoned
+
+
+class TestBoundaryLabels:
+    def test_save_load_roundtrip_and_replace(self, tmp_path):
+        from asl_fluency.data.boundary_labels import (
+            load_boundary_labels,
+            save_clip_spans,
+            spans_for,
+        )
+
+        p = tmp_path / "boundary_labels.csv"
+        save_clip_spans(p, "c0", [(0, 10, "H"), (10, 20, "I")])
+        save_clip_spans(p, "c1", [(0, 15, "A")])
+        # re-label c0 -> old rows replaced, c1 untouched
+        save_clip_spans(p, "c0", [(0, 8, "H"), (8, 20, "I")])
+        df = load_boundary_labels(p)
+        assert len(df[df.clip_id == "c0"]) == 2
+        assert spans_for(df, "c0") == [(0, 8, "H"), (8, 20, "I")]
+        assert spans_for(df, "c1") == [(0, 15, "A")]
+        assert spans_for(df, "nope") == []
+
+    def test_rejects_disordered_spans(self, tmp_path):
+        from asl_fluency.data.boundary_labels import save_clip_spans
+
+        with pytest.raises(ValueError):
+            save_clip_spans(tmp_path / "b.csv", "c0", [(10, 20, "A"), (0, 10, "B")])
+
+
+class TestBoundaryUI:
+    def test_http_boundary_mode(self, tmp_path):
+        import json
+        import threading
+        import urllib.request
+
+        import cv2
+
+        from asl_fluency.data.ratings_ui import serve
+
+        d = tmp_path / "clip_a"
+        d.mkdir()
+        for i in range(6):
+            cv2.imwrite(str(d / f"{i:04d}.jpg"), np.full((8, 8, 3), i * 40, np.uint8))
+
+        out = tmp_path / "boundary_labels.csv"
+        server = serve(None, {"clip_a": d}, port=0, mode="boundaries",
+                       boundary_path=out, transcripts={"clip_a": "HI"})
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            base = f"http://127.0.0.1:{port}"
+            sess = json.loads(urllib.request.urlopen(base + "/api/session").read())
+            assert sess["clips"] == ["clip_a"]
+            lab = json.loads(
+                urllib.request.urlopen(base + "/api/clip_label/clip_a").read())
+            assert lab["transcript"] == "HI" and lab["spans"] == []
+            spans = [
+                {"letter": "H", "start_frame": 0, "end_frame": 3},
+                {"letter": "I", "start_frame": 3, "end_frame": 6},
+            ]
+            req = urllib.request.Request(
+                base + "/api/label",
+                data=json.dumps({"clip_id": "clip_a", "spans": spans}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            assert json.loads(urllib.request.urlopen(req).read())["ok"]
+            from asl_fluency.data.boundary_labels import load_boundary_labels
+            df = load_boundary_labels(out)
+            assert len(df) == 2 and set(df["letter"]) == {"H", "I"}
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestPersist:
+    def _features(self, n=30, seed=0):
+        rng = np.random.default_rng(seed)
+        cols = ["letters_per_second"] + KINEMATIC_FEATURES
+        feats = pd.DataFrame(
+            rng.normal(size=(n, len(cols))), columns=cols
+        )
+        feats["clip_id"] = [f"c{i}" for i in range(n)]
+        feats["letters_per_second"] = np.linspace(1, 7, n)  # signal
+        return feats
+
+    def test_models_are_picklable(self):
+        import pickle
+
+        from asl_fluency.models.baseline import make_model
+
+        feats = self._features()
+        y = pd.Series(np.linspace(1, 5, 30), index=[f"c{i}" for i in range(30)])
+        for kind in ("naive_speed", "ridge", "gradient_boosting"):
+            fs = "naive" if kind == "naive_speed" else "kinematic"
+            m = make_model(kind, fs).fit(feats, y.to_numpy())
+            blob = pickle.dumps(m)  # closure classes would raise here
+            assert len(blob) > 0
+
+    def test_fit_save_load_predict(self, tmp_path):
+        from asl_fluency.models.persist import (
+            fit_scorer,
+            load_scorer,
+            predict_scores,
+            save_scorer,
+        )
+
+        feats = self._features()
+        y = pd.Series(np.linspace(1, 5, 30), index=[f"c{i}" for i in range(30)])
+        model, labeled = fit_scorer(feats, y, "ridge", "kinematic")
+        assert len(labeled) == 30
+        path = save_scorer(model, tmp_path / "scorer.joblib", kind="ridge",
+                           feature_set="kinematic", n_train_clips=30)
+        artifact = load_scorer(path)
+        assert artifact["kind"] == "ridge" and artifact["n_train_clips"] == 30
+        preds = predict_scores(artifact, feats.head(5))
+        assert len(preds) == 5 and preds.between(1, 5).all()  # clipped to scale
+        # perfect linear signal -> training-set fit should be strong
+        full = predict_scores(artifact, feats)
+        assert np.corrcoef(full, y)[0, 1] > 0.9
+
+    def test_fit_scorer_rejects_empty_overlap(self):
+        from asl_fluency.models.persist import fit_scorer
+
+        feats = self._features()
+        y = pd.Series([3.0], index=["unrelated_clip"])
+        with pytest.raises(ValueError, match="no overlap"):
+            fit_scorer(feats, y, "ridge", "kinematic")
+
+
+class TestSparseTrackingRows:
+    def _sparse_seq(self):
+        """3 detected frames (passes the segmentation gate for 2 letters)
+        but too few to smooth -> NaN kinematics."""
+        n = 60
+        lm = np.zeros((n, N_LANDMARKS, 3), dtype=np.float32)
+        frame_ok = np.zeros(n, bool)
+        frame_ok[[10, 30, 50]] = True
+        lm[~frame_ok] = np.nan
+        return LandmarkSequence("sparse_clip", lm, frame_ok, 30.0)
+
+    def test_no_nan_warnings_on_sparse_clip(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            row = compute_feature_row(self._sparse_seq(), "AB")
+        assert np.isnan(row["trans_vel_mean"])  # honestly NaN, not noise
+
+    def test_build_feature_table_drops_nan_rows(self, tmp_path):
+        from asl_fluency.features.pipeline import build_feature_table
+
+        lm_dir = tmp_path / "landmarks"
+        lm_dir.mkdir()
+        self._sparse_seq().save(lm_dir / "sparse_clip.npz")
+        make_seq("healthy_clip", n_frames=90, seed=1).save(lm_dir / "healthy_clip.npz")
+        table = build_feature_table(
+            lm_dir, {"sparse_clip": "AB", "healthy_clip": "HELLO"}
+        )
+        assert table["clip_id"].tolist() == ["healthy_clip"]

@@ -50,7 +50,16 @@ def build_feature_table(
     transcripts: dict[str, str],
     **kw,
 ) -> pd.DataFrame:
-    """Build the full feature table from a directory of .npz landmark files."""
+    """Build the full feature table from a directory of .npz landmark files.
+
+    Rows whose kinematic features came out NaN (tracking too sparse to
+    smooth, even though the clip passed the segmentation gate) are dropped
+    and reported — sklearn estimators cannot fit NaNs, and such rows carry
+    no real signal.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
     rows = []
     for path in sorted(Path(landmark_dir).glob("*.npz")):
         seq = LandmarkSequence.load(path)
@@ -59,7 +68,17 @@ def build_feature_table(
         try:
             rows.append(compute_feature_row(seq, transcripts[seq.clip_id], **kw))
         except ValueError as exc:
-            import logging
-
-            logging.getLogger(__name__).warning("skip %s: %s", seq.clip_id, exc)
-    return pd.DataFrame(rows)
+            log.warning("skip %s: %s", seq.clip_id, exc)
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    feature_cols = NAIVE_FEATURES + KINEMATIC_FEATURES
+    bad = table[feature_cols].isna().any(axis=1)
+    if bad.any():
+        log.warning(
+            "drop %d clips with NaN features (tracking too sparse): %s",
+            int(bad.sum()),
+            ", ".join(table.loc[bad, "clip_id"].head(10)),
+        )
+        table = table[~bad].reset_index(drop=True)
+    return table
