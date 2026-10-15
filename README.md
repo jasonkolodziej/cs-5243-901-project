@@ -393,3 +393,52 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 └── tests/                           # synthetic end-to-end tests (no video data required)
     └── test_pipeline.py             # frame-dir capture, loader, segmentation, features, metrics, agreement, ablation
 ```
+
+## After `boundary-sensitivity`
+
+**1. (Optional) AI pre-scores** — only if you implement a VLM backend in `_score_with_backend`. Skipping is fine; the sampler falls back to letters/sec stratification automatically.
+
+```bash
+uv run asl-fluency ai-rate --backend <your-vlm>   # or skip entirely
+```
+
+**2. Generate the stratified intake sheet** — 50 clips spanning the speed range × 3 raters:
+
+```bash
+uv run asl-fluency rating-sheet --raters instructor_a,instructor_b,fluent_c --n-clips 50
+```
+
+**3. Collect the human data (the critical path):**
+
+```bash
+uv run asl-fluency rate                # 3 raters × 50 clips, ~10 min each
+uv run asl-fluency label-boundaries    # optional now — see note below
+```
+
+**4. Sanity-check ground truth**, then the hypothesis test:
+
+```bash
+uv run asl-fluency agreement data/ratings/ratings_intake.csv   # want ICC ≥ ~0.6
+uv run asl-fluency evaluate data/ratings/ratings_intake.csv    # 4 arms now, incl. kinematic_robust_ridge
+```
+
+**5. Decision point.** If the kinematic arms' Spearman CIs are decisive → done collecting. If too wide → top up and repeat 4:
+
+```bash
+uv run asl-fluency rating-sheet --raters instructor_a,instructor_b,fluent_c --n-clips 25 --batch 2
+uv run asl-fluency rate
+```
+
+**6. Persist and apply the winning scorer:**
+
+```bash
+uv run asl-fluency train --kind ridge --feature-set kinematic   # whichever arm wins
+uv run asl-fluency score --from-features
+```
+
+> [!NOTE]
+>
+> Two notes on what's optional:
+>
+> - **`label-boundaries`** is now a nice-to-have, not a blocker. The sensitivity analysis already answered "how much does boundary error hurt" (answer: not much, except the two artifact features). Hand labels would still let you report *actual* uniform-vs-true boundary error in the paper — a stronger Section 7 rebuttal — but it's ~30–50 clips of tedious labeling you can skip if time is short.
+> - **Section 7 fairness evaluation**: if you want the stratified skin-tone/lighting metrics in the paper, someone needs to fill in `data/ratings/clip_context.csv` for the rated clips (see `clip_context.example.csv`). Without it, `evaluate` just skips that table.
