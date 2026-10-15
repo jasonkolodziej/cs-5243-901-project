@@ -27,6 +27,8 @@ def run_ablation(
     arms = arms or [
         {"name": "naive_speed_only", "kind": "naive_speed", "feature_set": "naive"},
         {"name": "kinematic_ridge", "kind": "ridge", "feature_set": "kinematic"},
+        {"name": "kinematic_robust_ridge", "kind": "ridge",
+         "feature_set": "kinematic_robust"},
         {"name": "kinematic_gbm", "kind": "gradient_boosting", "feature_set": "kinematic"},
     ]
     rows, details = [], {}

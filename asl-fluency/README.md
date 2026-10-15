@@ -227,7 +227,12 @@ actually hurt my features?"**
    First look on 20 real clips: whole-clip features (LDJ, pauses, path
    efficiency) are perfectly robust; `trans_*` statistics degrade gracefully;
    `letter_dur_std_s` / `letter_dur_cv` collapse (near-artifacts under
-   uniform segmentation).
+   uniform segmentation). **Full-corpus run (7,236 clips) confirms this**:
+   ρ = 1.00 for whole-clip features, 0.71–0.90 for `trans_*`, but ≈ 0.0 /
+   0.48 for `letter_dur_std_s` / `letter_dur_cv`. The artifact features are
+   excluded from the `kinematic_robust` feature set, which `evaluate` runs
+   as an extra ablation arm (`kinematic_robust_ridge`) so the keep/drop
+   decision is made empirically against human ratings.
 3. Only if needed: **CTC forced alignment** — train a letter recognizer on
    *landmark sequences* (not pixels) over ChicagoFSWild+ (clip-level
    transcripts, no frame labels: exactly the CTC setting), then Viterbi-align

@@ -23,9 +23,20 @@ KINEMATIC_FEATURES = [
 ]
 QUALITY_COVARIATES = ["detection_rate"]  # kept out of the model, used for slicing
 
+# Full-corpus boundary-jitter analysis (boundary-sensitivity on 7,236 clips)
+# showed letter_dur_std_s / letter_dur_cv are artifacts of the aligner (rank
+# correlation vs. unperturbed ≈ 0.0 / 0.5 — an even split makes durations
+# near-identical by construction). The "kinematic_robust" set drops them so
+# the ablation can test whether the artifact features help or hurt.
+ALIGNER_ARTIFACT_FEATURES = ["letter_dur_std_s", "letter_dur_cv"]
+KINEMATIC_ROBUST_FEATURES = [
+    f for f in KINEMATIC_FEATURES if f not in ALIGNER_ARTIFACT_FEATURES
+]
+
 FEATURE_SETS = {
     "naive": NAIVE_FEATURES,                                  # baseline arm
     "kinematic": NAIVE_FEATURES + KINEMATIC_FEATURES,         # proposal's main arm
+    "kinematic_robust": NAIVE_FEATURES + KINEMATIC_ROBUST_FEATURES,  # minus artifacts
     "full": NAIVE_FEATURES + KINEMATIC_FEATURES,              # + fused embeddings later
 }
 

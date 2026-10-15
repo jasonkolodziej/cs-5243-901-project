@@ -197,7 +197,8 @@ class TestAblation:
         feats = pd.DataFrame(rows.values())
         y = pd.Series(y)
         summary, _ = run_ablation(feats, y, n_splits=3)
-        assert len(summary) == 3
+        assert len(summary) == 4  # naive, kinematic, kinematic_robust, kinematic_gbm
+        assert "kinematic_robust_ridge" in set(summary["arm"])
         kin = summary.set_index("arm").loc["kinematic_ridge"]
         assert kin["spearman"] > 0.3  # signal should be recoverable
 
@@ -717,6 +718,18 @@ class TestPersist:
         y = pd.Series([3.0], index=["unrelated_clip"])
         with pytest.raises(ValueError, match="no overlap"):
             fit_scorer(feats, y, "ridge", "kinematic")
+
+
+class TestFeatureSets:
+    def test_kinematic_robust_drops_aligner_artifacts(self):
+        from asl_fluency.features.pipeline import FEATURE_SETS
+
+        robust = FEATURE_SETS["kinematic_robust"]
+        assert "letter_dur_std_s" not in robust
+        assert "letter_dur_cv" not in robust
+        assert "letters_per_second" in robust
+        assert "trans_vel_mean" in robust  # degraded but real signal: kept
+        assert len(robust) == len(FEATURE_SETS["kinematic"]) - 2
 
 
 class TestSparseTrackingRows:
