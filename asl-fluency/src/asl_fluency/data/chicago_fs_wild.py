@@ -15,10 +15,10 @@ in the config at the folder that contains them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import tarfile
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
@@ -112,7 +112,7 @@ def load_clip_index(
         )
     resolved = _resolve_clip_paths(df, raw_dir, base_dir)
     found = int(resolved["exists"].sum())
-    total = int(len(resolved))
+    total = len(resolved)
     if found == 0:
         raise FileNotFoundError(
             "Found annotation CSV, but no clip frames/video files were found. "

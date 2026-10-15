@@ -227,7 +227,7 @@ class TestRelativePathResolution:
         row = ci.frame.iloc[0]
         # Path should be relative to base_dir
         assert not os.path.isabs(row["video_path"])
-        assert row["video_path"] == str("ChicagoFSWild-Frames/aslized/clip_0001")
+        assert row["video_path"] == "ChicagoFSWild-Frames/aslized/clip_0001"
         assert row["transcript"] == "HELLO"
 
     def test_loader_keeps_absolute_when_outside_base_dir(self, tmp_path):
@@ -267,9 +267,10 @@ class TestRelativePathResolution:
 
 class TestFeaturePipelineGuards:
     def test_build_feature_table_empty_when_no_transcript_matches(self, tmp_path):
-        from asl_fluency.features.pipeline import build_feature_table
-        from asl_fluency.landmarks.extractor import LandmarkSequence, N_LANDMARKS
         import numpy as np
+
+        from asl_fluency.features.pipeline import build_feature_table
+        from asl_fluency.landmarks.extractor import N_LANDMARKS, LandmarkSequence
 
         lm_dir = tmp_path / "landmarks"
         lm_dir.mkdir()
@@ -287,3 +288,245 @@ class TestFeaturePipelineGuards:
         lm_dir.mkdir()
         table = build_feature_table(lm_dir, {})
         assert table.empty
+
+
+class TestStratifiedSample:
+    def _features(self, n=60, seed=0):
+        rng = np.random.default_rng(seed)
+        return pd.DataFrame({
+            "clip_id": [f"c{i:03d}" for i in range(n)],
+            "signer_id": [f"s{i % 10}" for i in range(n)],
+            "letters_per_second": np.linspace(0.5, 8.0, n),
+            "detection_rate": rng.uniform(0.5, 1.0, n).round(3),
+        })
+
+    def test_spans_strata_and_size(self):
+        from asl_fluency.data.fluency_labels import stratified_rating_sample
+
+        out = stratified_rating_sample(
+            self._features(), 20, seed=1, score_col="letters_per_second"
+        )
+        assert len(out) == 20
+        assert set(out["stratum"]) == {0, 1, 2, 3, 4}
+        # stratified => wider speed coverage than the slowest/fastest 20 alone
+        speeds = self._features().set_index("clip_id").loc[out["clip_id"],
+                                                           "letters_per_second"]
+        assert speeds.min() < 1.5 and speeds.max() > 6.5
+
+    def test_deterministic_with_seed(self):
+        from asl_fluency.data.fluency_labels import stratified_rating_sample
+
+        a = stratified_rating_sample(self._features(), 20, seed=7,
+                                     score_col="letters_per_second")
+        b = stratified_rating_sample(self._features(), 20, seed=7,
+                                     score_col="letters_per_second")
+        assert a["clip_id"].tolist() == b["clip_id"].tolist()
+
+    def test_batches_are_disjoint(self):
+        """Adaptive top-up: batch 2 must never re-sample batch 1 clips."""
+        from asl_fluency.data.fluency_labels import stratified_rating_sample
+
+        feats = self._features()
+        b1 = stratified_rating_sample(feats, 20, seed=1,
+                                      score_col="letters_per_second")
+        b2 = stratified_rating_sample(feats, 20, seed=2,
+                                      score_col="letters_per_second",
+                                      exclude_clip_ids=set(b1["clip_id"]))
+        assert not set(b1["clip_id"]) & set(b2["clip_id"])
+        assert len(b2) == 20
+
+    def test_detection_rate_gate(self):
+        from asl_fluency.data.fluency_labels import stratified_rating_sample
+
+        feats = self._features()
+        feats["detection_rate"] = 0.5  # everything fails the gate
+        out = stratified_rating_sample(feats, 20, seed=1,
+                                       score_col="letters_per_second",
+                                       min_detection_rate=0.8)
+        assert out.empty
+
+    def test_max_per_signer(self):
+        from asl_fluency.data.fluency_labels import stratified_rating_sample
+
+        out = stratified_rating_sample(
+            self._features(), 20, seed=1, score_col="letters_per_second",
+            max_per_signer=2,
+        )
+        assert (out["signer_id"].value_counts() <= 2).all()
+
+
+class TestConsensusGuard:
+    def _ratings(self):
+        return pd.DataFrame({
+            "clip_id": ["c0", "c0", "c0", "c1", "c1", "c1"],
+            "rater_id": ["h1", "h2", "vlm_judge"] * 2,
+            "rating": [2.0, 4.0, 5.0, 1.0, 3.0, 5.0],
+        })
+
+    def test_consensus_excludes_ai_by_default(self):
+        from asl_fluency.data.fluency_labels import consensus_scores
+
+        y = consensus_scores(self._ratings())
+        assert y["c0"] == pytest.approx(3.0)  # (2+4)/2, not (2+4+5)/3
+
+    def test_consensus_include_ai_opt_in(self):
+        from asl_fluency.data.fluency_labels import consensus_scores
+
+        y = consensus_scores(self._ratings(), include_ai=True)
+        assert y["c0"] == pytest.approx((2 + 4 + 5) / 3)
+
+    def test_split_ai_raters(self):
+        from asl_fluency.data.fluency_labels import split_ai_raters
+
+        human, ai = split_ai_raters(self._ratings())
+        assert set(human["rater_id"]) == {"h1", "h2"}
+        assert set(ai["rater_id"]) == {"vlm_judge"}
+
+
+class TestRatingsIO:
+    def test_load_ratings_drops_blank_cells(self, tmp_path):
+        """A partially filled intake sheet (UI mid-session) must load cleanly."""
+        from asl_fluency.data.fluency_labels import load_ratings
+
+        p = tmp_path / "r.csv"
+        p.write_text("clip_id,rater_id,rating\nc0,h1,4\nc0,h2,\nc1,h1,2\n")
+        df = load_ratings(p)
+        assert len(df) == 2  # blank row dropped, no validation error
+
+    def test_save_rating_creates_updates_and_clears(self, tmp_path):
+        from asl_fluency.data.fluency_labels import save_rating
+
+        p = tmp_path / "r.csv"
+        save_rating(p, "c0", "h1", 4)
+        save_rating(p, "c0", "h1", 5)  # update, not duplicate
+        save_rating(p, "c1", "h1", 2)
+        df = pd.read_csv(p, dtype={"clip_id": str})
+        assert len(df) == 2
+        assert df.set_index("clip_id").loc["c0", "rating"] == 5
+        save_rating(p, "c1", "h1", None)  # clear back to blank
+        df = pd.read_csv(p, dtype={"clip_id": str}).fillna({"rating": ""})
+        assert df.set_index("clip_id").loc["c1", "rating"] == ""
+
+    def test_save_rating_rejects_out_of_scale(self, tmp_path):
+        from asl_fluency.data.fluency_labels import save_rating
+
+        with pytest.raises(ValueError):
+            save_rating(tmp_path / "r.csv", "c0", "h1", 6)
+
+
+class TestRatingUI:
+    def _frame_dir(self, tmp_path, name="clip_a", n=6):
+        import cv2
+
+        d = tmp_path / name
+        d.mkdir()
+        for i in range(n):
+            cv2.imwrite(str(d / f"{i:04d}.jpg"), np.full((8, 8, 3), i * 30, np.uint8))
+        return d
+
+    def test_per_rater_order_deterministic_and_distinct(self):
+        from asl_fluency.data.ratings_ui import per_rater_order
+
+        clips = [f"c{i}" for i in range(20)]
+        a1, a2 = per_rater_order(clips, "r1"), per_rater_order(clips, "r1")
+        b1 = per_rater_order(clips, "r2")
+        assert a1 == a2  # stable across sessions (resume-safe)
+        assert a1 != b1  # different per rater (washes out order effects)
+        assert sorted(a1) == sorted(clips)
+
+    def test_catalog_serves_frames_and_blocks_traversal(self, tmp_path):
+        from asl_fluency.data.ratings_ui import ClipCatalog
+
+        d = self._frame_dir(tmp_path)
+        cat = ClipCatalog({"clip_a": d})
+        info = cat.info("clip_a")
+        assert info["kind"] == "frames" and len(info["frames"]) == 6
+        assert cat.media_file("clip_a", "0001.jpg") == d / "0001.jpg"
+        assert cat.media_file("clip_a", "../secret") is None
+        assert cat.media_file("clip_a", "9999.jpg") is None
+        assert cat.info("nope") is None
+
+    def test_http_end_to_end(self, tmp_path):
+        """Real server: session -> clip info -> frame bytes -> POST a rating."""
+        import json
+        import threading
+        import urllib.request
+
+        from asl_fluency.data.fluency_labels import rating_sheet_template
+        from asl_fluency.data.ratings_ui import serve
+
+        d = self._frame_dir(tmp_path)
+        sheet = tmp_path / "ratings.csv"
+        rating_sheet_template(["clip_a"], ["h1", "h2"]).to_csv(sheet, index=False)
+
+        server = serve(sheet, {"clip_a": d}, port=0)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            base = f"http://127.0.0.1:{port}"
+            sess = json.loads(urllib.request.urlopen(base + "/api/session?rater=h1").read())
+            assert sess["clips"] == ["clip_a"]
+            info = json.loads(urllib.request.urlopen(base + "/api/clip/clip_a").read())
+            frame = urllib.request.urlopen(base + info["frames"][0]).read()
+            assert frame[:2] == b"\xff\xd8"  # JPEG magic bytes
+            req = urllib.request.Request(
+                base + "/api/rate",
+                data=json.dumps({"rater_id": "h1", "clip_id": "clip_a",
+                                 "rating": 4}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            res = json.loads(urllib.request.urlopen(req).read())
+            assert res["ok"] and res["progress"]["n_rated"] == 1
+            saved = pd.read_csv(sheet)
+            row = saved[(saved.clip_id == "clip_a") & (saved.rater_id == "h1")]
+            assert row["rating"].iloc[0] == 4
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+class TestAIJudge:
+    def test_mock_backend_valid_and_deterministic(self, tmp_path):
+        from asl_fluency.ai_judge import score_clip
+
+        r1 = score_clip(tmp_path / "clip_a", backend="mock")
+        r2 = score_clip(tmp_path / "clip_a", backend="mock")
+        assert r1 == r2 and 1 <= r1["rating"] <= 5
+
+    def test_live_backend_raises_with_guidance(self, tmp_path):
+        from asl_fluency.ai_judge import score_clip
+
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            score_clip(tmp_path / "clip_a", backend="gemini")
+
+    def test_run_ai_rating_writes_vlm_rows_and_resumes(self, tmp_path):
+        from asl_fluency.ai_judge import run_ai_rating
+        from asl_fluency.data.fluency_labels import split_ai_raters
+
+        clips = {f"c{i}": tmp_path / f"c{i}" for i in range(3)}
+        out = tmp_path / "ratings_ai.csv"
+        df1 = run_ai_rating(clips, out, backend="mock", limit=2)
+        assert len(df1) == 2
+        df2 = run_ai_rating(clips, out, backend="mock")  # resumes, adds the 3rd
+        assert len(df2) == 3
+        _, ai = split_ai_raters(df2)
+        assert set(ai["rater_id"]) == {"vlm_judge"}
+
+    def test_render_clip_video_from_frame_dir(self, tmp_path):
+        import cv2
+
+        from asl_fluency.ai_judge import render_clip_video
+
+        d = tmp_path / "clip_a"
+        d.mkdir()
+        for i in range(5):
+            cv2.imwrite(str(d / f"{i:04d}.jpg"), np.full((16, 16, 3), i * 40, np.uint8))
+        out = render_clip_video(d, tmp_path / "out" / "clip_a.mp4")
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_prompt_blind_to_transcript(self):
+        from asl_fluency.ai_judge import build_prompt
+
+        p = build_prompt()
+        assert "1-5" in p and "fluency" in p.lower()

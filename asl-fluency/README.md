@@ -113,7 +113,16 @@ rate features. Run `asl-fluency demo data/raw/ChicagoFSWild-Frames/<signer>/<cli
 --transcript WORD` to sanity-check one clip before the batch run.
 
 No dataset has fluency labels — collect a small human-rated subset (1–5 scale,
-instructors or fluent signers) with the built-in rating-sheet tooling.
+instructors or fluent signers) with the built-in rating-sheet tooling and the
+browser rating UI (`asl-fluency rate`).
+
+**How small can the human-rated set be?** The evaluation is a correlation
+between model scores and human consensus ratings, so the sample size is a
+power question: n ≈ 47 clips detects ρ = 0.4 and n ≈ 30 detects ρ = 0.5
+(80% power, α = .05, two-sided). Combined with stratified sampling and the
+adaptive top-up loop (`--batch 2`, `--batch 3`, …), ~50–70 clips × 3 raters
+is usually enough — far below the naive 100 × 3 default. Clips are short
+(median < 1 s), so a 50-clip batch is ~10 minutes per rater.
 
 ## Running the experiments
 
@@ -130,14 +139,31 @@ asl-fluency landmarks            # add --limit 50 for a quick smoke run
 # 3. compute the kinematic feature table
 asl-fluency features
 
-# 4. prepare the human-rating intake sheet, then collect 1-5 ratings
-asl-fluency rating-sheet --raters instructor_a,instructor_b,fluent_c --n-clips 100
+# 4. (optional) AI-judge pre-scores over the feature pool — aids stratified
+#    sampling; never part of the human ground truth. Ships with a mock backend
+#    for plumbing tests; implement _score_with_backend in ai_judge.py for a
+#    real VLM (prompt + clip rendering are ready).
+asl-fluency ai-rate --backend mock --limit 200
 
-# 5. sanity-check ground truth: Fleiss' kappa + ICC(2,k)
+# 5. stratified intake sheet (samples from features.csv — every rated clip is
+#    guaranteed evaluable). Auto-stratifies on the AI score when present,
+#    else letters/sec quintiles. ~50 clips x 3 raters ≈ 10 min per rater and
+#    is powered to detect rho >= 0.4 at 80%.
+asl-fluency rating-sheet --raters instructor_a,instructor_b,fluent_c --n-clips 50
+
+# 6. collect ratings in the browser UI (watch, click 1-5, auto-advance;
+#    saves per click, stop/resume any time)
+asl-fluency rate
+
+# 7. sanity-check ground truth: Fleiss' kappa + ICC(2,k), human raters only.
+#    If ICC looks fine but the model correlation CI is too wide, top up with
+#    another batch: asl-fluency rating-sheet ... --batch 2 (never re-samples
+#    clips already in the sheet).
 asl-fluency agreement data/ratings/ratings_intake.csv
 
-# 6. ablation vs. consensus ratings: naive speed-only vs. kinematic arms,
-#    plus stratified metrics if data/ratings/clip_context.csv exists
+# 8. ablation vs. consensus ratings: naive speed-only vs. kinematic arms,
+#    plus stratified metrics if data/ratings/clip_context.csv exists.
+#    AI-judge (vlm_*) rows are automatically excluded from the consensus.
 asl-fluency evaluate data/ratings/ratings_intake.csv
 ```
 
@@ -151,13 +177,90 @@ evaluation) are exemplified in `data/ratings/*.example.csv`.
 |---|---|
 | RQ / hypothesis test (kinematics vs. naive speed) | `evaluation/ablation.py` arms `naive_speed_only` vs. `kinematic_*` |
 | Step 1 landmarks | `landmarks/extractor.py` (Tasks API, `SigningHandSelector`), `landmarks/live.py` (webcam/stream) |
-| Step 2 letter boundaries | `segmentation/aligner.py` (`uniform`, `energy_valley`, forced-alignment hook) |
+| Step 2 letter boundaries | `segmentation/aligner.py` (`uniform` + `energy_valley` shipped; `forced_alignment` is a stub hook — see Roadmap Gap 1) |
 | Step 3 fluency features | `features/kinematics.py` (letters/s, transition velocity/jerk, pauses, log dimensionless jerk, path efficiency) |
-| Step 4 learned scorer | `models/baseline.py`, `models/fused.py` (video-fusion arm, `--extra fused`) |
-| Step 5 human validation | `data/fluency_labels.py`, `asl-fluency rating-sheet` |
+| Step 4 learned scorer | `models/baseline.py`, `models/fused.py` (fusion arm, `--extra fused`; deferred — see Roadmap Gap 2) |
+| Step 5 human validation | `data/fluency_labels.py` (stratified sampling, human-only consensus), `asl-fluency rating-sheet` + `asl-fluency rate` (browser UI) |
+| AI-judge pre-scoring (sampling aid, not ground truth) | `ai_judge.py`, `asl-fluency ai-rate` |
 | Metrics: Spearman/Pearson, MAE | `evaluation/metrics.py` (+ bootstrap CIs) |
 | Inter-rater agreement (κ / ICC) | `evaluation/agreement.py` |
 | Skin-tone / lighting stratified eval (Section 7) | `evaluation/ablation.stratified_metrics`, `landmarks/quality.py` |
+
+## Roadmap
+
+Two known gaps, in the order they should be tackled. Everything else in the
+pipeline (index → landmarks → features → ratings → agreement → evaluate) is
+already runnable end-to-end.
+
+### Gap 1: letter-boundary segmentation (do this first)
+
+Every transition-zone feature (`trans_vel/jerk_*`, pause placement) is computed
+relative to letter boundaries — and the RQ is precisely about whether those
+features predict fluency. Global features (`letters_per_second`, duration CV,
+total pause time) are far more robust to boundary error, so the first question
+is not "how do I get perfect alignment" but **"how much does boundary error
+actually hurt my features?"**
+
+1. Hand-label letter boundaries on ~30–50 clips (ideally the same clips that
+   get fluency ratings — one session serves both): `(clip_id, letter,
+   start_frame, end_frame)` CSV under `data/ratings/`. The browser rating UI's
+   clip-serving/flipbook machinery is the natural base for a boundary-marking
+   mode.
+2. **Sensitivity analysis** (new `boundary-sensitivity` command, from existing
+   parts): jitter uniform/energy-valley boundaries by ±2/±4/±6 frames,
+   recompute features, and rank-correlate each feature against its unperturbed
+   self. Features that survive jitter need no better aligner; features that
+   collapse set the alignment quality bar. This may kill the whole problem.
+3. Only if needed: **CTC forced alignment** — train a letter recognizer on
+   *landmark sequences* (not pixels) over ChicagoFSWild+ (clip-level
+   transcripts, no frame labels: exactly the CTC setting), then Viterbi-align
+   against the known transcript. Plugs directly into the existing
+   `method="forced_alignment"` hook in `segmentation/aligner.py`.
+4. Validate against the hand-labeled set and report boundary error in the
+   paper — this directly answers Section 7's "boundary errors propagate".
+
+### Gap 2: fusion arm (defer until labels exist)
+
+Its only job is the kinematic-only vs. kinematic+learned ablation row, which
+is meaningless until human ratings exist and ICC ≥ ~0.6 (`asl-fluency
+agreement`). Section 7's warning rules out training a video model from
+scratch on ~100 labels, so the choice is:
+
+- **Frozen backbone + learned head** (safest): pretrained video encoder
+  (r3d_18/Kinetics; better: a WLASL-pretrained I3D/VideoMAE, which the
+  proposal already earmarks for pretraining) over each letter span, frozen,
+  embeddings concatenated with the kinematic row; train only the ridge/GBM
+  head. Trainable parameters stay in the dozens.
+- **Learned pose encoder** (preferred): a small temporal model (TCN or
+  2-layer GRU) over the 21×3 landmark sequences — still the hand-engineered
+  vs. learned comparison, far cheaper than pixels, sidesteps the pixel-level
+  skin-tone/lighting bias, and pretrainable self-supervised (e.g.
+  masked-keypoint prediction) on all 55k unlabeled ChicagoFSWild+ clips.
+
+Rules for either: same signer-disjoint folds as the other arms
+(`cross_validate` already enforces this); compare arms on held-out test
+**once** (repeated peeking with ~100 labels manufactures spurious wins);
+augment only in fluency-preserving ways (brightness, crop, horizontal jitter —
+never speed or temporal warping, which changes the very quantity raters
+scored).
+
+### Also planned
+
+- `train` / `score` commands: `evaluate` fits models only inside CV folds and
+  discards them; `train` will fit the winning arm on all rated data and
+  persist it with joblib, `score` will apply the artifact to new clips.
+
+### Suggested overall order
+
+1. Ratings pilot: `features` on ~1,000 clips → `rating-sheet --n-clips 50` →
+   `rate` → `agreement` (ICC ≥ 0.6?). The "~100+ clips" target is reached
+   adaptively: top up with `--batch 2`, `--batch 3`, … only while the Spearman
+   CIs are too wide — don't pre-commit human hours the statistics may not need.
+2. Boundary labels on the same clips → `boundary-sensitivity`.
+3. Hypothesis test: `evaluate` (runnable end-to-end today).
+4. Branch: boundaries the bottleneck → CTC aligner; else skip and say so in
+   the paper. CIs too wide → next rating batch.
+5. Fusion arm last — frozen/pretrained only.
 
 ## Design decisions tied to Section 7 (challenges)
 
@@ -195,6 +298,9 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │   │
 │   ├── ratings/                     # human fluency ratings and optional context
 │   │   ├── .gitkeep
+│   │   ├── ratings_intake.csv       # the sheet the browser UI writes into
+│   │   ├── rating_batches.csv       # per-batch strata log (adaptive collection)
+│   │   ├── ratings_ai.csv           # AI-judge scores (vlm_* rows; NOT ground truth)
 │   │   ├── clip_context.example.csv # example: per-clip skin_tone / lighting for stratified eval
 │   │   └── ratings.example.csv      # example: long-format rater × clip ratings
 │   │
@@ -219,13 +325,17 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 ├── src/
 │   └── asl_fluency/                 # main pipeline package (CLI entrypoint: asl-fluency)
 │       ├── __init__.py
-│       ├── cli.py                   # Typer CLI: index, landmarks, features, rating-sheet, …
+│       ├── cli.py                   # Typer CLI: index, landmarks, features, rating-sheet,
+│       │                            #   rate (browser UI), ai-rate, agreement, evaluate
+│       ├── ai_judge.py              # AI-judge pre-scoring: rubric prompt, clip rendering,
+│       │                            #   pluggable VLM backends (mock ships enabled)
 │       ├── config.py                # YAML loading, deep-merge, path resolution, project_root()
 │       │
 │       ├── data/                    # dataset loaders & rating utilities
 │       │   ├── __init__.py
 │       │   ├── chicago_fs_wild.py   # ClipIndex, load_clip_index, signer-disjoint split, relative-path logic
-│       │   └── fluency_labels.py    # rating-sheet template, consensus scores, inter-rater loading
+│       │   ├── fluency_labels.py    # stratified sampling, rating sheets, human-only consensus, save_rating
+│       │   └── ratings_ui.py        # stdlib browser UI: flipbook/video player, 1-5 capture, per-rater order
 │       │
 │       ├── evaluation/              # metrics, agreement, ablation runner
 │       │   ├── __init__.py

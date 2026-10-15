@@ -91,7 +91,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'fused'", specifier = ">=2.3" },
     { name = "torchvision", marker = "extra == 'fused'", specifier = ">=0.18" },
     { name = "tqdm", specifier = ">=4.66" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.16" },
 ]
 provides-extras = ["fused", "dev"]
 

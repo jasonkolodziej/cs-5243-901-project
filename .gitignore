@@ -149,3 +149,4 @@ vite.config.ts.timestamp-*
 **/*.pyo
 **/*.pyd
 **/data/raw/**/*.jpg
+**/data/interim/landmarks/*.npz

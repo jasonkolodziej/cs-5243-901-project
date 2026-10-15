@@ -3,7 +3,9 @@
     asl-fluency index        build the clip index from a downloaded corpus
     asl-fluency landmarks    extract MediaPipe landmarks for all clips
     asl-fluency features     compute the kinematic feature table
-    asl-fluency rating-sheet generate an empty sheet for human raters
+    asl-fluency ai-rate      AI-judge pre-scores (stratification aid, NOT ground truth)
+    asl-fluency rating-sheet stratified intake sheet for human raters (batchable)
+    asl-fluency rate         browser UI: watch clips, click 1-5, saves to the sheet
     asl-fluency agreement    inter-rater agreement on collected ratings
     asl-fluency evaluate     ablation + metrics against human ratings
 """
@@ -104,39 +106,253 @@ def features(
     typer.echo(f"{len(table)} rows -> {out}")
 
 
+def _load_clip_paths(cfg: dict) -> dict[str, Path]:
+    """clip_id -> absolute media path (frame dir or video), from the clip index."""
+    idx = pd.read_csv(resolve_path(cfg, "interim_dir") / "clip_index.csv",
+                      dtype={"clip_id": str})
+    root = project_root()
+    return {
+        c: (root / p) if not Path(p).is_absolute() else Path(p)
+        for c, p in zip(idx["clip_id"], idx["video_path"])
+    }
+
+
 @app.command()
 def rating_sheet(
     config: Path | None = typer.Option(None, "--config", "-c"),
     raters: str = typer.Option(..., help="comma-separated rater ids"),
-    n_clips: int = typer.Option(100, help="how many clips to sample for rating"),
+    n_clips: int = typer.Option(50, help="how many clips to sample for this batch"),
+    batch: int = typer.Option(1, help="batch number (adaptive collection: 1, 2, ...)"),
+    stratify_by: str = typer.Option(
+        "auto", help="ai_score | letters_per_second | auto | none"
+    ),
+    min_detection_rate: float = typer.Option(
+        0.8, help="exclude clips with worse hand-tracking than this"
+    ),
+    max_per_signer: int | None = typer.Option(
+        None, help="optional cap on clips per signer in one batch"
+    ),
 ) -> None:
-    """Generate the empty intake sheet for human fluency raters."""
-    from .data.fluency_labels import rating_sheet_template
+    """Generate/extend the intake sheet with a stratified clip batch.
+
+    Samples from features.csv (never the raw clip index), so every rated clip
+    is guaranteed to have model features. Stratification spans the fluency
+    range: AI-judge score quintiles when data/ratings/ratings_ai.csv exists,
+    otherwise letters-per-second quintiles. Re-running with --batch 2, 3, ...
+    adds fresh clips and never re-samples ones already in the sheet — this is
+    the adaptive top-up loop: rate a pilot, check agreement/correlation, then
+    add a batch only if the confidence intervals are still too wide.
+    """
+    from .data.fluency_labels import rating_sheet_template, stratified_rating_sample
 
     cfg = load_config(config)
-    idx = pd.read_csv(resolve_path(cfg, "interim_dir") / "clip_index.csv",
-                      dtype={"clip_id": str})
-    sampled = idx["clip_id"].sample(min(n_clips, len(idx)),
-                                    random_state=cfg["project"]["seed"]).tolist()
-    sheet = rating_sheet_template(sampled, [r.strip() for r in raters.split(",")])
-    out = resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
+    seed = cfg["project"]["seed"]
+    ratings_dir = resolve_path(cfg, "ratings_dir")
+    out = ratings_dir / "ratings_intake.csv"
+    rater_ids = [r.strip() for r in raters.split(",")]
+
+    already: set[str] = set()
+    if out.exists():
+        already = set(pd.read_csv(out, dtype={"clip_id": str})["clip_id"].unique())
+
+    strat_col: str | None
+    ai_path = ratings_dir / "ratings_ai.csv"
+    feats_path = resolve_path(cfg, "processed_dir") / "features.csv"
+    feats = (
+        pd.read_csv(feats_path, dtype={"clip_id": str})
+        if feats_path.exists()
+        else pd.DataFrame()
+    )
+
+    if stratify_by == "none":
+        strat_col = None
+    elif stratify_by == "auto":
+        strat_col = "ai_score" if ai_path.exists() else "letters_per_second"
+    else:
+        strat_col = stratify_by
+
+    if strat_col is None or feats.empty:
+        if strat_col is not None:
+            typer.echo(
+                "Warning: features.csv missing/empty; falling back to a uniform "
+                "sample from clip_index.csv. Run `asl-fluency features` first so "
+                "rated clips have model features."
+            )
+        idx = pd.read_csv(resolve_path(cfg, "interim_dir") / "clip_index.csv",
+                          dtype={"clip_id": str})
+        pool = idx[~idx["clip_id"].isin(already)]
+        sampled_df = pool.sample(min(n_clips, len(pool)), random_state=seed + batch)
+        sampled = sampled_df["clip_id"].tolist()
+        batch_log = sampled_df[["clip_id", "signer_id"]].assign(
+            batch=batch, stratum=-1, stratum_score=float("nan")
+        )
+    else:
+        work = feats.copy()
+        if strat_col == "ai_score":
+            ai = pd.read_csv(ai_path, dtype={"clip_id": str})
+            score = ai.groupby("clip_id")["rating"].mean().rename("ai_score")
+            work = work.merge(score, on="clip_id", how="left")
+        picked = stratified_rating_sample(
+            work,
+            n_clips,
+            seed=seed + batch,
+            score_col=strat_col,
+            min_detection_rate=min_detection_rate,
+            exclude_clip_ids=already,
+            max_per_signer=max_per_signer,
+        )
+        sampled = picked["clip_id"].tolist()
+        batch_log = picked.assign(batch=batch)
+        typer.echo(
+            f"stratified on {strat_col}: "
+            + ", ".join(
+                f"stratum {s}: {n}" for s, n in picked.groupby("stratum").size().items()
+            )
+        )
+
+    sheet = rating_sheet_template(sampled, rater_ids)
+    if len(sampled) < n_clips:
+        typer.echo(
+            f"note: only {len(sampled)} of the requested {n_clips} clips were "
+            "available (pool exhausted by earlier batches, the detection-rate "
+            "gate, or missing AI scores)."
+        )
     out.parent.mkdir(parents=True, exist_ok=True)
-    sheet.to_csv(out, index=False)
-    typer.echo(f"{len(sheet)} rows ({len(sampled)} clips x {len(raters.split(','))} raters) -> {out}")
+    combined = (
+        pd.concat([pd.read_csv(out, dtype={"clip_id": str}), sheet], ignore_index=True)
+        if out.exists()
+        else sheet
+    )
+    combined.to_csv(out, index=False)
+
+    log_path = ratings_dir / "rating_batches.csv"
+    batch_log.to_csv(
+        log_path, mode="a", index=False, header=not log_path.exists()
+    )
+    typer.echo(
+        f"batch {batch}: +{len(sheet)} rows ({len(sampled)} clips x {len(rater_ids)} "
+        f"raters); total sheet now {len(combined)} rows -> {out}"
+    )
+    typer.echo("next: asl-fluency rate   (browser UI to collect the ratings)")
+
+
+@app.command()
+def rate(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ratings: Path | None = typer.Option(
+        None, help="intake sheet to fill (default: data/ratings/ratings_intake.csv)"
+    ),
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8765),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Launch the browser rating UI: watch each clip, click 1-5.
+
+    Serves the clips listed in the intake sheet (frame directories play as a
+    looping flipbook, video files as <video>), one rater at a time, in a
+    per-rater shuffled order. Every click is saved to the sheet immediately,
+    so sessions can be stopped and resumed freely.
+    """
+    import webbrowser
+
+    from .data.ratings_ui import serve
+
+    cfg = load_config(config)
+    ratings_path = ratings or resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
+    if not Path(ratings_path).exists():
+        raise typer.BadParameter(
+            f"{ratings_path} not found — generate it with `asl-fluency rating-sheet` first."
+        )
+    sheet = pd.read_csv(ratings_path, dtype={"clip_id": str})
+    paths = _load_clip_paths(cfg)
+    clips = {c: paths[c] for c in sheet["clip_id"].unique() if c in paths}
+    missing = set(sheet["clip_id"].unique()) - set(clips)
+    if missing:
+        typer.echo(f"Warning: {len(missing)} sheet clips have no media in the index; "
+                   "they will be skipped in the UI.")
+
+    scale = tuple(cfg["labels"]["rating_scale"])
+    fps = float(cfg["landmarks"].get("default_fps", 30.0))
+    server = serve(ratings_path, clips, host=host, port=port,
+                   rating_scale=scale, default_fps=fps, seed=cfg["project"]["seed"])
+    url = f"http://{host}:{port}/"
+    typer.echo(f"Rating UI at {url}  (Ctrl+C to stop; progress is saved per click)")
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        typer.echo(f"ratings saved in {ratings_path}")
+
+
+@app.command()
+def ai_rate(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    backend: str = typer.Option("mock", help="mock | <your VLM backend, see ai_judge.py>"),
+    limit: int | None = typer.Option(None, help="score at most N new clips"),
+    rater_id: str = typer.Option("vlm_judge"),
+    min_detection_rate: float = typer.Option(
+        0.8, help="only score clips with at least this tracking quality"
+    ),
+) -> None:
+    """AI-judge pre-scores over the feature pool -> data/ratings/ratings_ai.csv.
+
+    These scores are an AID for stratified sampling and a secondary analysis
+    axis — they are never part of the human ground truth (consensus_scores
+    excludes vlm_* raters automatically). Re-runs resume where they stopped.
+    """
+    from .ai_judge import run_ai_rating
+
+    cfg = load_config(config)
+    feats_path = resolve_path(cfg, "processed_dir") / "features.csv"
+    if not feats_path.exists():
+        raise typer.BadParameter("features.csv not found — run `asl-fluency features` first.")
+    feats = pd.read_csv(feats_path, dtype={"clip_id": str})
+    pool = feats[feats["detection_rate"] >= min_detection_rate]["clip_id"].unique()
+    paths = _load_clip_paths(cfg)
+    clip_paths = {c: paths[c] for c in pool if c in paths}
+
+    out = resolve_path(cfg, "ratings_dir") / "ratings_ai.csv"
+    df = run_ai_rating(
+        clip_paths, out, backend=backend, rater_id=rater_id,
+        work_dir=resolve_path(cfg, "interim_dir") / "ai_clips", limit=limit,
+    )
+    typer.echo(f"{len(df)} AI-rated rows (rater '{rater_id}') -> {out}")
 
 
 @app.command()
 def agreement(
     ratings: Path = typer.Argument(..., help="long-format ratings CSV"),
     config: Path | None = typer.Option(None, "--config", "-c"),
+    include_ai: bool = typer.Option(
+        False, "--include-ai", help="include vlm_* AI-judge rows in the report"
+    ),
 ) -> None:
-    """Ground-truth sanity check: Fleiss' kappa / ICC on collected ratings."""
-    from .data.fluency_labels import load_ratings
+    """Ground-truth sanity check: Fleiss' kappa / ICC on collected ratings.
+
+    Human raters only by default. To check the AI judge against the humans,
+    run this on a file that contains both and pass --include-ai.
+    """
+    from .data.fluency_labels import load_ratings, split_ai_raters
     from .evaluation.agreement import agreement_report
 
     cfg = load_config(config)
     scale = tuple(cfg["labels"]["rating_scale"])
-    report = agreement_report(load_ratings(ratings, scale))
+    df = load_ratings(ratings, scale)
+    human, ai = split_ai_raters(df)
+    if not ai.empty and not include_ai:
+        typer.echo(
+            f"note: {len(ai)} AI-judge rows excluded from the human agreement report "
+            "(use --include-ai to fold them in)"
+        )
+    target = df if include_ai else human
+    if target.empty:
+        typer.echo("no ratings to report on yet.")
+        return
+    report = agreement_report(target)
     for k, v in report.items():
         typer.echo(f"{k}: {v:.3f}" if isinstance(v, float) else f"{k}: {v}")
 
@@ -147,20 +363,51 @@ def evaluate(
     config: Path | None = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Ablation: naive vs. kinematic arms against consensus human ratings."""
-    from .data.fluency_labels import consensus_scores, load_ratings
+    from .data.fluency_labels import consensus_scores, load_ratings, split_ai_raters
     from .evaluation.ablation import run_ablation, stratified_metrics
 
     cfg = load_config(config)
     scale = tuple(cfg["labels"]["rating_scale"])
-    y = consensus_scores(load_ratings(ratings, scale))
+    df = load_ratings(ratings, scale)
+    human, ai = split_ai_raters(df)
+    if not ai.empty:
+        typer.echo(f"note: {len(ai)} AI-judge rows excluded from the human consensus.")
+    y = consensus_scores(df)  # human-only by default: vlm_* rows never enter ground truth
+    per_clip = human.groupby("clip_id")["rater_id"].nunique()
+    min_raters = cfg["labels"].get("min_raters_per_clip", 3)
+    thin = per_clip[per_clip < min_raters]
+    if len(thin):
+        typer.echo(
+            f"Warning: {len(thin)} clips have fewer than {min_raters} human raters; "
+            "their consensus scores are noisy."
+        )
     feats = pd.read_csv(resolve_path(cfg, "processed_dir") / "features.csv",
                         dtype={"clip_id": str})
     feats = feats[feats["clip_id"].isin(y.index)].reset_index(drop=True)
-    summary, details = run_ablation(
-        feats, y,
-        group_col="signer_id" if cfg["model"]["cv"] == "signer_group" else None,
-        n_splits=cfg["model"]["n_splits"],
-    )
+    if feats.empty:
+        typer.echo(
+            "No overlap between rated clips and features.csv. If the sheet was "
+            "generated before features existed, regenerate it (it samples from "
+            "features.csv now) or run `asl-fluency features` on the rated clips."
+        )
+        raise typer.Exit(code=1)
+    group_col = "signer_id" if cfg["model"]["cv"] == "signer_group" else None
+    n_splits = cfg["model"]["n_splits"]
+    if group_col:
+        n_groups = feats["signer_id"].nunique()
+        if n_groups < 2:
+            typer.echo(
+                "Warning: only 1 signer in the rated set; signer-disjoint CV is "
+                "meaningless — falling back to plain k-fold for this run."
+            )
+            group_col = None
+        elif n_groups < n_splits:
+            typer.echo(
+                f"Warning: only {n_groups} signers in the rated set; reducing CV "
+                f"folds from {n_splits} to {n_groups}."
+            )
+            n_splits = n_groups
+    summary, details = run_ablation(feats, y, group_col=group_col, n_splits=n_splits)
     typer.echo(summary.to_string(index=False))
     out = resolve_path(cfg, "processed_dir") / "ablation_results.csv"
     summary.to_csv(out, index=False)

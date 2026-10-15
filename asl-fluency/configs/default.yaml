@@ -39,6 +39,7 @@ features:
 labels:
   rating_scale: [1, 5] # 1-5 fluency scale from the proposal
   min_raters_per_clip: 3
+  ai_rater_prefix: vlm_ # rater ids with this prefix are AI judges, never ground truth
 
 model:
   kind: ridge # naive_speed | ridge | random_forest | gradient_boosting
