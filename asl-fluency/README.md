@@ -140,10 +140,21 @@ asl-fluency landmarks            # add --limit 50 for a quick smoke run
 asl-fluency features
 
 # 4. (optional) AI-judge pre-scores over the feature pool — aids stratified
-#    sampling; never part of the human ground truth. Ships with a mock backend
-#    for plumbing tests; implement _score_with_backend in ai_judge.py for a
-#    real VLM (prompt + clip rendering are ready).
+#    sampling; never part of the human ground truth. Two backends ship:
+#    "mock" (deterministic, plumbing tests) and "grok" (xAI vision model).
 asl-fluency ai-rate --backend mock --limit 200
+
+#    grok backend: Grok has no video-input API, so clips are scored from N
+#    evenly-sampled frames sent in temporal order (default 16). One-time setup:
+#      uv add openai                 # API client dependency
+#      cp example.env .env           # then put your XAI_API_KEY in .env
+#    Settings live in the ai_judge section of configs/default.yaml (model,
+#    n_frames, temperature); CLI flags --backend/--model/--n-frames override
+#    them. Raw per-clip JSON responses are kept under data/interim/ai_clips/
+#    for auditability. Pilot on ~30-50 clips first and check the scores
+#    rank-correlate with letters/sec (and later human ratings via
+#    `asl-fluency agreement`) before trusting them for stratification.
+asl-fluency ai-rate --backend grok --limit 200
 
 # 5. stratified intake sheet (samples from features.csv — every rated clip is
 #    guaranteed evaluable). Auto-stratifies on the AI score when present,
@@ -352,7 +363,7 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       ├── cli.py                   # Typer CLI: index, landmarks, features, rating-sheet,
 │       │                            #   rate (browser UI), ai-rate, agreement, evaluate
 │       ├── ai_judge.py              # AI-judge pre-scoring: rubric prompt, clip rendering,
-│       │                            #   pluggable VLM backends (mock ships enabled)
+│       │                            #   backends: mock (plumbing) + grok (xAI vision API)
 │       ├── config.py                # YAML loading, deep-merge, path resolution, project_root()
 │       │
 │       ├── data/                    # dataset loaders & rating utilities

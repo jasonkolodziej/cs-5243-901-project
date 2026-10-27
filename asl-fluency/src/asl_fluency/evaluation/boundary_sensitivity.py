@@ -112,9 +112,15 @@ def sensitivity_report(
         for j in jitters:
             pj = pd.DataFrame(pert_rows[j]).set_index("clip_id")[f].reindex(base.index)
             mask = base[f].notna() & pj.notna()  # pairwise-complete
+            x, y = base[f][mask], pj[mask]
+            # A constant column (zero variance after masking) has no defined
+            # rank correlation — scipy would emit ConstantInputWarning and
+            # return NaN anyway. Record NaN deliberately: this is the artifact
+            # signature (e.g. letter_dur_* under uniform segmentation), not a
+            # numeric accident.
             rho = (
-                stats.spearmanr(base[f][mask], pj[mask]).statistic
-                if mask.sum() >= 3
+                stats.spearmanr(x, y).statistic
+                if len(x) >= 3 and x.nunique() > 1 and y.nunique() > 1
                 else np.nan
             )
             row[f"rho_jit{j}"] = float(rho) if np.isfinite(rho) else np.nan

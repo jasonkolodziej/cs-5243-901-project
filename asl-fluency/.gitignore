@@ -1,0 +1,15 @@
+# Secrets — never commit API keys
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Heavy / regenerable artifacts (see README)
+assets/*.task
+data/interim/landmarks/
+data/interim/ai_clips/
+data/interim/ai_judge/

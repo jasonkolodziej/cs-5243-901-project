@@ -78,6 +78,13 @@
   // --- Python ---
   "python.defaultInterpreterPath": "${workspaceFolder}/asl-fluency/.venv/bin/python",
   "python.terminal.activateEnvironment": true,
+  "python-envs.pythonProjects": [
+    {
+      "path": ".",
+      "envManager": "ms-python.python:venv",
+      "packageManager": "ms-python.python:uv"
+    }
+  ],
 
   // --- Markdown ---
   // "markdownlint.config": { ... } - See `.markdownlint.json`

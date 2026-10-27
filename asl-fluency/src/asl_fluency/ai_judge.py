@@ -16,16 +16,22 @@ AI rows are written in the same long format as human ratings with a
 agreement with no schema changes, and `consensus_scores` excludes them from
 ground truth automatically.
 
-Backends: only the deterministic ``mock`` backend ships enabled (for testing
-the plumbing). To go live, implement ``_score_with_backend`` for your VLM of
-choice (Gemini / GPT / Claude video APIs) — the prompt, rendering, and CSV
-plumbing are already done.
+Backends: the deterministic ``mock`` backend ships enabled (for testing the
+plumbing), and ``grok`` (xAI) is implemented via the OpenAI-compatible chat
+API over evenly-sampled frames — Grok has no video-input endpoint, so clips
+are sent as N frames in temporal order rather than as an mp4. To add another
+provider, implement a ``_score_<name>`` function and register it in
+``_score_with_backend`` — the prompt, rendering, and CSV plumbing are done.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import os
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -152,11 +158,16 @@ def score_clip(
     backend: str = "mock",
     work_dir: str | Path | None = None,
     clip_id: str | None = None,
+    **opts: Any,
 ) -> dict:
-    """Score one clip; returns {"rating": int, "confidence": str, "rationale": str}."""
+    """Score one clip; returns {"rating": int, "confidence": str, "rationale": str}.
+
+    ``**opts`` carries backend settings from the ``ai_judge`` config section
+    (model, n_frames, temperature, jpeg_quality); CLI flags override config.
+    """
     if backend == "mock":
         return _score_mock(clip_path)
-    return _score_with_backend(clip_path, backend, work_dir, clip_id)
+    return _score_with_backend(clip_path, backend, work_dir, clip_id, **opts)
 
 
 def _score_mock(clip_path: str | Path) -> dict:
@@ -179,28 +190,104 @@ def _score_with_backend(
     backend: str,
     work_dir: str | Path | None,
     clip_id: str | None,
+    **opts: Any,
 ) -> dict:
-    """Live VLM backends — implement this for your provider of choice.
-
-    Suggested shape (any video API works the same way):
-
-        video = render_clip_video(clip_path, Path(work_dir) / f"{clip_id}.mp4")
-        response = <provider client>.generate(build_prompt(), video=video)
-        payload = json.loads(response.text)   # keys: rating, confidence, rationale
-        assert 1 <= int(payload["rating"]) <= 5
-        return payload
-
-    Tips: request the JSON-only response format if the provider supports it;
-    retry with the contact-sheet fallback (render_contact_sheet) if the video
-    upload fails; keep per-clip raw JSON responses under work_dir for
-    auditability.
-    """
+    """Live VLM backends. Register new providers here."""
+    if backend == "grok":
+        return _score_grok(clip_path, work_dir, clip_id, **opts)
     raise NotImplementedError(
-        f"AI backend '{backend}' is not implemented yet. "
-        "Implement models-independent scoring in ai_judge._score_with_backend "
-        "(render_clip_video + build_prompt are ready), or use --backend mock "
-        "to test the plumbing."
+        f"AI backend '{backend}' is not implemented. Available: mock, grok. "
+        "To add a provider, write a _score_<name> function and route it here "
+        "(render_clip_video / render_contact_sheet + build_prompt are ready)."
     )
+
+
+def _sample_frames(clip_path: str | Path, n_frames: int) -> list:
+    """Evenly sample up to n_frames frames from a clip, in temporal order."""
+    cap, _ = open_frame_source(clip_path)
+    frames = []
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        frames.append(frame)
+    if not frames:
+        raise OSError(f"No frames readable from {clip_path}")
+    idx = np.linspace(0, len(frames) - 1, min(n_frames, len(frames))).astype(int)
+    return [frames[i] for i in idx]
+
+
+def _score_grok(
+    clip_path: str | Path,
+    work_dir: str | Path | None,
+    clip_id: str | None,
+    *,
+    model: str = "grok-4.7",
+    n_frames: int = 16,
+    temperature: float = 0,
+    jpeg_quality: int = 80,
+    **_: Any,
+) -> dict:
+    """xAI Grok backend: vision chat over N frames sent in temporal order.
+
+    Grok's chat API has no video input, so instead of an mp4 we send evenly
+    sampled JPEG frames as separate images (xAI allows many images per
+    request). Frame order is stated in the prompt so the judge can reason
+    about frame-to-frame motion — the actual fluency signal.
+
+    Requires: XAI_API_KEY in the environment (config.load_dotenv() picks up
+    .env automatically; see example.env) and the `openai` package.
+    """
+    api_key = os.environ.get("XAI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "XAI_API_KEY is not set. Copy example.env to .env and fill it in "
+            "(config.py loads .env automatically), or export it in your shell."
+        )
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise RuntimeError("grok backend needs the openai package: uv add openai") from e
+    import cv2
+
+    client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+
+    frames = _sample_frames(clip_path, n_frames)
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                f"These {len(frames)} images are frames from ONE fingerspelling "
+                "clip, in temporal order at even intervals. Judge the smoothness "
+                "and consistency of motion ACROSS frames, then answer per the "
+                "rubric.\n\n" + build_prompt()
+            ),
+        }
+    ]
+    for frame in frames:
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        if not ok:
+            raise OSError(f"JPEG encoding failed for a frame of {clip_path}")
+        b64 = base64.b64encode(buf).decode()
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+        )
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": content}],
+        response_format={"type": "json_object"},
+        temperature=temperature,
+    )
+    payload = json.loads(resp.choices[0].message.content)
+    payload["rating"] = int(payload["rating"])
+    assert 1 <= payload["rating"] <= 5, f"rating out of range: {payload}"
+
+    if work_dir:  # keep raw responses for auditability
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        name = f"{clip_id or Path(str(clip_path)).stem}.json"
+        (Path(work_dir) / name).write_text(json.dumps(payload, indent=2))
+    return payload
 
 
 def run_ai_rating(
@@ -210,12 +297,14 @@ def run_ai_rating(
     rater_id: str = DEFAULT_AI_RATER_ID,
     work_dir: str | Path | None = None,
     limit: int | None = None,
+    **score_opts: Any,
 ) -> pd.DataFrame:
     """Score a pool of clips and write/extend a long-format AI ratings CSV.
 
     Saves incrementally (one row per clip via save_rating) so a long run
     survives interruption and can simply be re-run — clips already present in
-    ``out_csv`` are skipped.
+    ``out_csv`` are skipped. ``**score_opts`` (model, n_frames, …) is passed
+    through to the backend.
     """
     out_csv = Path(out_csv)
     done: set[str] = set()
@@ -229,7 +318,9 @@ def run_ai_rating(
             continue
         if limit is not None and scored >= limit:
             break
-        result = score_clip(path, backend=backend, work_dir=work_dir, clip_id=clip_id)
+        result = score_clip(
+            path, backend=backend, work_dir=work_dir, clip_id=clip_id, **score_opts
+        )
         save_rating(out_csv, clip_id, rater_id, int(result["rating"]))
         scored += 1
 

@@ -295,7 +295,15 @@ def rate(
 @app.command()
 def ai_rate(
     config: Path | None = typer.Option(None, "--config", "-c"),
-    backend: str = typer.Option("mock", help="mock | <your VLM backend, see ai_judge.py>"),
+    backend: str | None = typer.Option(
+        None, help="mock | grok — default: ai_judge.backend in the config"
+    ),
+    model: str | None = typer.Option(
+        None, help="VLM model id — default: ai_judge.model in the config"
+    ),
+    n_frames: int | None = typer.Option(
+        None, help="frames sampled per clip — default: ai_judge.n_frames"
+    ),
     limit: int | None = typer.Option(None, help="score at most N new clips"),
     rater_id: str = typer.Option("vlm_judge"),
     min_detection_rate: float = typer.Option(
@@ -307,10 +315,23 @@ def ai_rate(
     These scores are an AID for stratified sampling and a secondary analysis
     axis — they are never part of the human ground truth (consensus_scores
     excludes vlm_* raters automatically). Re-runs resume where they stopped.
+
+    Backend settings come from the ai_judge section of the config; CLI flags
+    override them. The grok backend needs XAI_API_KEY in .env (see
+    example.env) and the openai package (uv add openai).
     """
     from .ai_judge import run_ai_rating
+    from .config import ai_judge_config
 
     cfg = load_config(config)
+    judge = ai_judge_config(cfg)
+    backend = backend or judge["backend"]
+    score_opts = {
+        "model": model or judge["model"],
+        "n_frames": n_frames or judge["n_frames"],
+        "temperature": judge["temperature"],
+        "jpeg_quality": judge["jpeg_quality"],
+    }
     feats_path = resolve_path(cfg, "processed_dir") / "features.csv"
     if not feats_path.exists():
         raise typer.BadParameter("features.csv not found — run `asl-fluency features` first.")
@@ -323,6 +344,7 @@ def ai_rate(
     df = run_ai_rating(
         clip_paths, out, backend=backend, rater_id=rater_id,
         work_dir=resolve_path(cfg, "interim_dir") / "ai_clips", limit=limit,
+        **score_opts,
     )
     typer.echo(f"{len(df)} AI-rated rows (rater '{rater_id}') -> {out}")
 

@@ -592,6 +592,31 @@ class TestBoundarySensitivity:
         ldj = rep.set_index("feature").loc["log_dimless_jerk", "rho_jit2"]
         assert ldj == pytest.approx(1.0)  # finite, not poisoned
 
+    def test_constant_feature_yields_nan_without_warning(self, tmp_path):
+        """Constant columns (the artifact signature) are recorded as NaN
+        deliberately — no scipy ConstantInputWarning may escape."""
+        import warnings
+
+        from scipy.stats import ConstantInputWarning
+
+        from asl_fluency.evaluation.boundary_sensitivity import sensitivity_report
+
+        lm_dir, transcripts = self._landmark_dir(tmp_path)
+        n = 60
+        lm = np.zeros((n, N_LANDMARKS, 3), dtype=np.float32)
+        frame_ok = np.zeros(n, bool)
+        frame_ok[[10, 30, 50]] = True
+        lm[~frame_ok] = np.nan
+        LandmarkSequence("sparse", lm, frame_ok, 30.0).save(lm_dir / "sparse.npz")
+        transcripts["sparse"] = "AB"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ConstantInputWarning)  # would raise
+            rep = sensitivity_report(lm_dir, transcripts, jitters=(2,), reps=2)
+        # NaN is a legitimate verdict here; numeric values must be finite
+        finite = rep["rho_jit2"].dropna()
+        assert (finite.abs() <= 1.0).all()
+
 
 class TestBoundaryLabels:
     def test_save_load_roundtrip_and_replace(self, tmp_path):

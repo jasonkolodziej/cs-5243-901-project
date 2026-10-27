@@ -41,6 +41,17 @@ labels:
   min_raters_per_clip: 3
   ai_rater_prefix: vlm_ # rater ids with this prefix are AI judges, never ground truth
 
+ai_judge:
+  # Pre-scores for stratified sampling only — never ground truth.
+  backend: mock # mock | grok
+  # grok backend (xAI): vision chat model over N evenly-sampled frames sent in
+  # temporal order (Grok has no video-input API). API key is NOT stored here:
+  # put XAI_API_KEY in .env (see example.env) or export it in your shell.
+  model: grok-4.7
+  n_frames: 16
+  temperature: 0
+  jpeg_quality: 80
+
 model:
   kind: ridge # naive_speed | ridge | random_forest | gradient_boosting
   cv: signer_group # signer_group (signer-disjoint) | kfold
