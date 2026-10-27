@@ -112,14 +112,7 @@
     "**/*.zshenv": true,
     "**/zshenv": true,
     "**/*.zsh-theme": true
-  },
-  "python-envs.pythonProjects": [
-    {
-      "path": ".",
-      "envManager": "ms-python.python:venv",
-      "packageManager": "ms-python.python:pip"
-    }
-  ]
+  }
   // "shellcheck.ignoreFileSchemes": [
   //   "git",
   //   "gitfs",

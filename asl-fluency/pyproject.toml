@@ -13,7 +13,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "statsmodels>=0.14",
     "pyyaml>=6.0",
-    "typer>=0.16",         # 0.15.x breaks --help rendering with click>=8.2
+    "typer>=0.16",   # 0.15.x breaks --help rendering with click>=8.2
     "rich>=13.7",
     "tqdm>=4.66",
     "matplotlib>=3.9",
@@ -25,7 +25,6 @@ dependencies = [
 # Optional deep-learning stack for the kinematic + raw-video fused model (ablation arm).
 fused = ["torch>=2.3", "torchvision>=0.18"]
 dev = ["pytest>=8.0", "ruff>=0.5", "ipykernel>=6.29"]
-ai = ["openai>=1.0"]
 
 [project.scripts]
 asl-fluency = "asl_fluency.cli:app"
