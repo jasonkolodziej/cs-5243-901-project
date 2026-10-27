@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import base64, json, os
 
 from .data.fluency_labels import DEFAULT_AI_RATER_ID, REQUIRED_COLUMNS, save_rating
 from .landmarks.extractor import open_frame_source
@@ -147,6 +148,56 @@ def render_contact_sheet(
 # Scoring backends
 # ---------------------------------------------------------------------------
 
+
+
+# ai_judge.py — additions
+
+def _score_grok(clip_path, work_dir, clip_id, n_frames=16, model="grok-4.7"):
+    from openai import OpenAI          # uv add openai
+    import cv2
+
+    client = OpenAI(
+        api_key=os.environ["XAI_API_KEY"],
+        base_url="https://api.x.ai/v1",
+    )
+
+    # evenly sample frames, in temporal order
+    cap, _ = open_frame_source(clip_path)
+    frames = []
+    while True:
+        ok, fr = cap.read()
+        if not ok:
+            break
+        frames.append(fr)
+    if not frames:
+        raise OSError(f"No frames readable from {clip_path}")
+    idx = np.linspace(0, len(frames) - 1, min(n_frames, len(frames))).astype(int)
+
+    content = [{"type": "text", "text":
+        f"These {len(idx)} frames are in temporal order from ONE fingerspelling "
+        "clip. Judge motion smoothness ACROSS frames, then answer per the rubric.\n\n"
+        + build_prompt()}]
+    for i in idx:
+        ok, buf = cv2.imencode(".jpg", frames[i], [cv2.IMWRITE_JPEG_QUALITY, 80])
+        b64 = base64.b64encode(buf).decode()
+        content.append({"type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": content}],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    payload = json.loads(resp.choices[0].message.content)
+    assert 1 <= int(payload["rating"]) <= 5
+
+    if work_dir:  # keep raw responses for auditability, per the docstring
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        (Path(work_dir) / f"{clip_id}.json").write_text(json.dumps(payload, indent=2))
+    return payload
+
+
 def score_clip(
     clip_path: str | Path,
     backend: str = "mock",
@@ -195,6 +246,8 @@ def _score_with_backend(
     upload fails; keep per-clip raw JSON responses under work_dir for
     auditability.
     """
+    if backend == "grok":
+        return _score_grok(clip_path, work_dir, clip_id)
     raise NotImplementedError(
         f"AI backend '{backend}' is not implemented yet. "
         "Implement models-independent scoring in ai_judge._score_with_backend "
