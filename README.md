@@ -20,7 +20,7 @@ only overall signing speed (letters per second).
 
 ## Project status
 
-_Last updated 2026-11-16. Ratings cutoff **2026-11-23**, final deadline **2026-12-02**._
+_Last updated 2026-11-16. Ratings cutoff **2026-11-17 at 11:59 PM**, final deadline **2026-12-02**._
 
 ### Done
 
@@ -40,12 +40,12 @@ _Last updated 2026-11-16. Ratings cutoff **2026-11-23**, final deadline **2026-1
 | # | Task | Owner | Needs | Due |
 |---|---|---|---|---|
 | 1 | Open PR `feat/pilot-modelling` → `chore/rating-sheet` | Jason | — | 11-17 |
-| 2 | Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | instructors | — | **11-23** |
+| 2 | Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | instructors | — | **11-17, 11:59 PM** |
 | 3 | Hand-label letter boundaries on the 50 rated clips (`label-boundaries`) | team | — | 11-20 |
 | 4 | Draft paper: intro, related work, methods, dataset, boundary sensitivity, pilot | team | — | 11-24 |
-| 5 | `agreement` (ICC ≥ 0.6?) then `evaluate` **once** on the final consensus | Jason | 2 | 11-24 |
-| 6 | Fallback if #2 misses the cutoff: report single-rater pilot (`evaluate --rater fluent_c`) | Jason | — | 11-24 |
-| 7 | `train` + `score --from-features`; re-run the pilot notebook; fill result tables | Jason | 5 or 6 | 11-25 |
+| 5 | `agreement` (ICC ≥ 0.6?) then `evaluate` **once** on the final consensus | Jason | 2 | 11-18 |
+| 6 | Fallback if #2 misses the cutoff: report single-rater pilot (`evaluate --rater fluent_c`) | Jason | — | 11-18 |
+| 7 | `train` + `score --from-features`; re-run the pilot notebook; fill result tables | Jason | 5 or 6 | 11-19 |
 | 8 | Fairness write-up (stratified metrics, tracker-quality gap, ITA caveats) | team | 7 | 11-27 |
 | 9 | Optional: rating batch 2 (`rating-sheet --batch 2`) — only if CIs too wide **and** time allows | team | 5 | 11-27 |
 | 10 | Final revisions, figures, limitations; submit | team | 7, 8 | **12-02** |
@@ -73,8 +73,8 @@ gantt
 
     section Ground truth
     Open PR feat/pilot-modelling             :a1, 2026-11-16, 2d
-    Instructor ratings                       :crit, active, r1, 2026-11-16, 2026-11-23
-    Ratings cutoff                           :milestone, crit, m1, 2026-11-23, 0d
+    Instructor ratings                       :crit, active, r1, 2026-11-16, 2026-11-18
+    Ratings cutoff (11-17 midnight)          :milestone, crit, m1, 2026-11-18, 0d
     Boundary labels (50 clips)               :b1, 2026-11-17, 2026-11-20
 
     section Analysis
