@@ -151,3 +151,8 @@ vite.config.ts.timestamp-*
 **/data/raw/**/*.jpg
 **/data/interim/landmarks/*.npz
 **/data/interim/ai_sheets
+**/data/ratings/ratings_a*.csv
+**/data/processed/ablation_results*.csv
+**/data/processed/stratified_results*.csv
+.agents/
+.github/

@@ -33,8 +33,16 @@ KINEMATIC_ROBUST_FEATURES = [
     f for f in KINEMATIC_FEATURES if f not in ALIGNER_ARTIFACT_FEATURES
 ]
 
+# Pre-registered primary set: one feature per construct named in the proposal's
+# RQ (signing rate, transition smoothness, pause patterns). Chosen a priori —
+# NOT by correlation with collected ratings — so the primary hypothesis test is
+# not tuned on the data it is evaluated on. Small enough (3 coefficients) to fit
+# honestly on ~50 rated clips, which the ~18-feature arms cannot (Section 7).
+CORE_FEATURES = ["letters_per_second", "log_dimless_jerk", "pause_total_s"]
+
 FEATURE_SETS = {
     "naive": NAIVE_FEATURES,                                  # baseline arm
+    "core": CORE_FEATURES,                                    # pre-registered primary arm
     "kinematic": NAIVE_FEATURES + KINEMATIC_FEATURES,         # proposal's main arm
     "kinematic_robust": NAIVE_FEATURES + KINEMATIC_ROBUST_FEATURES,  # minus artifacts
     "full": NAIVE_FEATURES + KINEMATIC_FEATURES,              # + fused embeddings later

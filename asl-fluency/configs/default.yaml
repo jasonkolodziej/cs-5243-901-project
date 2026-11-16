@@ -53,10 +53,12 @@ ai_judge:
   jpeg_quality: 80
 
 model:
-  kind: ridge # naive_speed | ridge | random_forest | gradient_boosting
+  # Pre-registered primary arm (core_ridge_cv): ridge with nested-LOO shrinkage
+  # over the 3 a-priori "core" features. `train` uses these by default.
+  kind: ridge_cv # mean | naive_speed | ridge | ridge_cv | ordinal | random_forest | gradient_boosting
   cv: signer_group # signer_group (signer-disjoint) | kfold
   n_splits: 5
-  feature_set: full # naive | kinematic | full  (ablation arms)
+  feature_set: core # naive | core | kinematic | kinematic_robust | full
 
 evaluation:
   stratify_by: [skin_tone, lighting] # fairness slices from proposal Section 7

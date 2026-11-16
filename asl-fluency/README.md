@@ -19,7 +19,7 @@ only overall signing speed (letters per second).
 video ──► 1. landmarks    MediaPipe Hands, 21 keypoints/frame       (landmarks/)
       ──► 2. segmentation letter boundaries from the transcript     (segmentation/)
       ──► 3. features     rate, velocity/jerk, pauses, smoothness   (features/)
-      ──► 4. model        naive baseline vs. ridge/GBM scorers      (models/)
+      ──► 4. model        naive baseline vs. shrunken ridge/ordinal  (models/)
       ──► 5. evaluation   Spearman/Pearson, MAE, ablations, κ/ICC   (evaluation/)
 ```
 
@@ -172,10 +172,17 @@ asl-fluency rate
 #    clips already in the sheet).
 asl-fluency agreement data/ratings/ratings_intake.csv
 
-# 8. ablation vs. consensus ratings: naive speed-only vs. kinematic arms,
-#    plus stratified metrics if data/ratings/clip_context.csv exists.
-#    AI-judge (vlm_*) rows are automatically excluded from the consensus.
+# 8a. objective fairness strata (Section 7), no human annotation: palm-pixel
+#     ITA skin-tone proxy + frame-luminance lighting -> data/ratings/clip_context.csv
+asl-fluency clip-context              # rated clips; --all for the whole corpus
+
+# 8b. ablation vs. consensus ratings: the pre-registered primary arm
+#     (core_ridge_cv) vs. naive speed-only, a paired-bootstrap delta-Spearman
+#     test, the mean-baseline MAE floor, secondary arms, and marginal stratified
+#     metrics (+ mean signed error) if clip_context.csv exists.
+#     AI-judge (vlm_*) rows are automatically excluded from the consensus.
 asl-fluency evaluate data/ratings/ratings_intake.csv
+asl-fluency evaluate data/ratings/ratings_intake.csv --rater fluent_c   # one rater only
 
 # 9. boundary ground truth + sensitivity (Roadmap Gap 1): label letter spans
 #    on the same rated clips in the browser, then measure how much boundary
@@ -183,31 +190,92 @@ asl-fluency evaluate data/ratings/ratings_intake.csv
 asl-fluency label-boundaries          # saves data/ratings/boundary_labels.csv
 asl-fluency boundary-sensitivity      # -> data/processed/boundary_sensitivity.csv
 
-# 10. once `evaluate` has picked a winning arm: fit it on all rated data and
-#     persist the scorer, then apply it to new clips / the whole feature table
-asl-fluency train --kind ridge --feature-set kinematic
+# 10. fit the pre-registered primary arm on all rated data and persist the
+#     scorer (config default: ridge_cv / core), then apply it to new clips or
+#     the whole feature table
+asl-fluency train                     # or --kind ordinal --feature-set core, ...
 asl-fluency score data/raw/fs_sample/mj_bienvenu_4509.mp4 --transcript INTERDISCIPLINARY
 asl-fluency score --from-features     # score every row of features.csv
 ```
 
 Ratings format (long CSV, one row per rater × clip) and the optional
 `clip_context.csv` (per-clip `skin_tone`, `lighting` for the stratified fairness
-evaluation) are exemplified in `data/ratings/*.example.csv`.
+evaluation) are exemplified in `data/ratings/*.example.csv`. `clip-context`
+writes the latter automatically; it refuses to overwrite an existing
+(possibly hand-annotated) file without `--force`.
+
+## Modelling and pre-registered analysis plan
+
+The first ablation run (one rater, 50 clips) showed every multi-feature arm at
+ρ ≈ 0 with MAE *worse than predicting the mean*: fixed-α ridge and GBM over ~18
+features overfit ~40 training clips per signer-disjoint fold (GBM train MAE ≈
+0.02 vs. held-out 0.83). The fix, consistent with Section 7's small-label
+warning:
+
+- **`core` feature set, chosen a priori** — one feature per construct named in
+  the RQ: rate (`letters_per_second`), smoothness (`log_dimless_jerk`), pauses
+  (`pause_total_s`). All three are whole-clip features, robust to boundary
+  error (boundary-sensitivity ρ ≥ 0.998). *Not* selected by correlation with
+  the collected ratings, so the primary test is not tuned on its own data.
+- **`ridge_cv`** — shrinkage chosen by efficient leave-one-out *inside* each
+  training fold (nested; no test leakage).
+- **`ordinal`** — proportional-odds model (statsmodels `OrderedModel`) for the
+  ordered 1–5 scale; predicts E[rating].
+- **`mean`** — training-fold mean; the MAE floor. Its correlation is reported
+  as NaN (fold means are anti-correlated with held-out ratings by construction).
+- **Paired bootstrap Δ Spearman** vs. `naive_speed_only` on the same
+  out-of-fold predictions (`delta_spearman`, `delta_ci`, `p_vs_naive` columns) —
+  the actual hypothesis test, which separate per-arm CIs cannot provide.
+
+Plan fixed **before** the instructor ratings are seen (see
+`evaluation/ablation.py`, `PRIMARY_ARM`):
+
+| Item | Decision |
+|---|---|
+| Ground truth | mean of human raters; valid only if ICC(2,k) ≥ 0.6 |
+| Primary test | `core_ridge_cv` vs. `naive_speed_only`, paired-bootstrap Δρ, one-sided α = .05 |
+| Secondary | `core_ordinal`, `kinematic_robust_ridge_cv`, legacy α=1 ridge / GBM — reported, never used to re-pick a winner |
+| Fairness | marginal metrics + mean signed error per skin-tone / lighting stratum, primary arm |
+| ICC < 0.6 or ratings late | per-rater results (`evaluate --rater …`) + agreement as findings; no consensus claim |
+
+**Single-rater pilot (`fluent_c`, n = 50, 27 signers)** — directionally
+consistent with the hypothesis, not yet significant:
+
+| arm | Spearman [95% CI] | MAE | Δρ vs. naive (p) |
+|---|---|---|---|
+| mean_baseline | — | 0.663 | — |
+| naive_speed_only | 0.06 [−0.23, 0.36] | 0.647 | — |
+| **core_ridge_cv** (primary) | 0.19 [−0.11, 0.46] | 0.663 | +0.13 (p = .14) |
+| core_ordinal | 0.26 [−0.02, 0.50] | 0.661 | +0.20 (p = .11) |
+| kinematic_ridge (α = 1, legacy) | −0.00 [−0.29, 0.28] | 0.858 | −0.06 |
+| kinematic_gbm (legacy) | −0.12 [−0.37, 0.14] | 0.825 | −0.18 |
+
+Fairness pilot: detection rate ≥ 0.98 in every skin-tone / lighting stratum
+(no tracker-quality gap); skin-tone signed errors |bias| ≤ 0.15. Full analysis,
+diagnostics and a simulated 3-rater dress rehearsal are in
+[`notebooks/01_pilot_modelling_and_fairness.ipynb`](notebooks/01_pilot_modelling_and_fairness.ipynb)
+— re-run it top to bottom once the instructor ratings land:
+
+```bash
+uv sync --extra dev
+uv run --with nbconvert jupyter nbconvert --to notebook --execute --inplace \
+  notebooks/01_pilot_modelling_and_fairness.ipynb
+```
 
 ## Experiment map → proposal
 
 | Proposal item | Code |
 |---|---|
-| RQ / hypothesis test (kinematics vs. naive speed) | `evaluation/ablation.py` arms `naive_speed_only` vs. `kinematic_*` |
+| RQ / hypothesis test (kinematics vs. naive speed) | `evaluation/ablation.py`: primary `core_ridge_cv` vs. `naive_speed_only`, paired bootstrap (`metrics.paired_bootstrap_delta`) |
 | Step 1 landmarks | `landmarks/extractor.py` (Tasks API, `SigningHandSelector`), `landmarks/live.py` (webcam/stream) |
 | Step 2 letter boundaries | `segmentation/aligner.py` (`uniform` + `energy_valley` shipped; `forced_alignment` is a stub hook — see Roadmap Gap 1); ground truth via `asl-fluency label-boundaries`, error tolerance via `asl-fluency boundary-sensitivity` |
 | Step 3 fluency features | `features/kinematics.py` (letters/s, transition velocity/jerk, pauses, log dimensionless jerk, path efficiency) |
-| Step 4 learned scorer | `models/baseline.py`, `models/fused.py` (fusion arm, `--extra fused`; deferred — see Roadmap Gap 2) |
+| Step 4 learned scorer | `models/baseline.py` (`mean`, `naive_speed`, `ridge_cv`, `ordinal`, ridge/RF/GBM), `models/fused.py` (fusion arm, `--extra fused`; deferred — see Roadmap Gap 2) |
 | Step 5 human validation | `data/fluency_labels.py` (stratified sampling, human-only consensus), `asl-fluency rating-sheet` + `asl-fluency rate` (browser UI) |
 | AI-judge pre-scoring (sampling aid, not ground truth) | `ai_judge.py`, `asl-fluency ai-rate` |
 | Metrics: Spearman/Pearson, MAE | `evaluation/metrics.py` (+ bootstrap CIs) |
 | Inter-rater agreement (κ / ICC) | `evaluation/agreement.py` |
-| Skin-tone / lighting stratified eval (Section 7) | `evaluation/ablation.stratified_metrics`, `landmarks/quality.py` |
+| Skin-tone / lighting stratified eval (Section 7) | `landmarks/context.py` + `asl-fluency clip-context` (ITA / luminance strata), `evaluation/ablation.marginal_stratified_metrics`, `landmarks/quality.py` |
 
 ## Roadmap
 
@@ -292,7 +360,9 @@ scored).
    adaptively: top up with `--batch 2`, `--batch 3`, … only while the Spearman
    CIs are too wide — don't pre-commit human hours the statistics may not need.
 2. Boundary labels on the same clips → `boundary-sensitivity`.
-3. Hypothesis test: `evaluate` (runnable end-to-end today).
+3. Hypothesis test: `clip-context` → `evaluate` — the pre-registered table,
+   run **once** on the final consensus (single-rater pilot already done; see
+   "Modelling and pre-registered analysis plan").
 4. Branch: boundaries the bottleneck → CTC aligner; else skip and say so in
    the paper. CIs too wide → next rating batch.
 5. Fusion arm last — frozen/pretrained only.
@@ -300,11 +370,16 @@ scored).
 ## Design decisions tied to Section 7 (challenges)
 
 - **Signer-disjoint CV everywhere** — fluency must generalize to unseen signers.
-- **Interpretable scorers first** (ridge/GBM over ~18 kinematic features) because the
-  rated set is small; the end-to-end fused model is an isolated ablation arm.
+- **Interpretable scorers first** — the primary arm is 3 a-priori features with
+  nested-CV shrinkage, because ~18 features overfit ~50 rated clips; ridge/GBM over
+  the full set and the end-to-end fused model are secondary ablation arms.
 - **Tracking-quality covariates** (`detection_rate`, dropout runs, interframe jumps)
   travel with every feature row so degraded-tracking clips can be filtered or stratified.
-- **Stratified metrics** by skin tone / lighting rather than aggregate-only reporting.
+- **Stratified metrics** by skin tone / lighting rather than aggregate-only reporting,
+  sliced one factor at a time (the joint grid is too sparse at n≈50) and with mean
+  signed error, since systematic over/under-scoring is the bias that matters. Strata
+  come from pixels (ITA proxy + luminance), not subjective annotation — a proxy
+  confounded with capture conditions, and reported as such.
 
 ## Tests
 
@@ -336,6 +411,7 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │   │   ├── ratings_intake.csv       # the sheet the browser UI writes into
 │   │   ├── rating_batches.csv       # per-batch strata log (adaptive collection)
 │   │   ├── ratings_ai.csv           # AI-judge scores (vlm_* rows; NOT ground truth)
+│   │   ├── clip_context.csv         # auto skin_tone (ITA) / lighting strata (`clip-context`)
 │   │   ├── clip_context.example.csv # example: per-clip skin_tone / lighting for stratified eval
 │   │   └── ratings.example.csv      # example: long-format rater × clip ratings
 │   │
@@ -350,7 +426,7 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       └── fs_sample/               # drop a single reassembled video here for quick demo runs
 │
 ├── notebooks/                       # exploratory analysis (Jupyter / Quarto)
-│   └── .gitkeep
+│   └── 01_pilot_modelling_and_fairness.ipynb  # analysis plan, modelling fix, fairness, rehearsal
 │
 ├── pyproject.toml                   # uv project metadata, deps, scripts, tool config
 ├── README.md                        # setup, usage, experiment map, design decisions
@@ -375,10 +451,10 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       │
 │       ├── evaluation/              # metrics, agreement, ablation runner
 │       │   ├── __init__.py
-│       │   ├── ablation.py          # naive vs. kinematic arms, stratified_metrics
+│       │   ├── ablation.py          # pre-registered arms, paired test, (marginal) stratified metrics
 │       │   ├── agreement.py         # Fleiss' kappa, ICC(2,k), Cohen's kappa
 │       │   ├── boundary_sensitivity.py  # boundary-jitter feature robustness (Gap 1)
-│       │   └── metrics.py           # Spearman/Pearson/MAE + bootstrap CIs
+│       │   └── metrics.py           # Spearman/Pearson/MAE, bootstrap CIs, paired bootstrap Δρ
 │       │
 │       ├── features/                # kinematic feature engineering
 │       │   ├── __init__.py
@@ -387,13 +463,14 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       │
 │       ├── landmarks/               # MediaPipe hand-landmark extraction
 │       │   ├── __init__.py
+│       │   ├── context.py           # ITA skin-tone proxy + luminance lighting strata
 │       │   ├── extractor.py         # HandLandmarker Tasks API, SigningHandSelector, batch_extract
 │       │   ├── live.py              # webcam / video-stream fluency monitor
 │       │   └── quality.py           # tracking-quality covariates
 │       │
 │       ├── models/                  # regressors & optional fused video arm
 │       │   ├── __init__.py
-│       │   ├── baseline.py          # naive speed, ridge, random forest, gradient boosting
+│       │   ├── baseline.py          # mean, naive speed, ridge(_cv), ordinal, RF, GBM
 │       │   ├── persist.py           # fit/persist/load the final scorer (train/score)
 │       │   └── fused.py             # kinematic + raw-video embedding ablation (needs --extra fused)
 │       │

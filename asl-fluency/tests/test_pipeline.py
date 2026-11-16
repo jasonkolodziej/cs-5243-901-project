@@ -196,11 +196,71 @@ class TestAblation:
             )
         feats = pd.DataFrame(rows.values())
         y = pd.Series(y)
-        summary, _ = run_ablation(feats, y, n_splits=3)
-        assert len(summary) == 4  # naive, kinematic, kinematic_robust, kinematic_gbm
-        assert "kinematic_robust_ridge" in set(summary["arm"])
-        kin = summary.set_index("arm").loc["kinematic_ridge"]
-        assert kin["spearman"] > 0.3  # signal should be recoverable
+        summary, _ = run_ablation(feats, y, n_splits=3, bootstrap_iters=200)
+        arms = summary.set_index("arm")
+        assert {"mean_baseline", "core_ridge_cv", "core_ordinal",
+                "kinematic_robust_ridge"} <= set(arms.index)
+        assert arms.loc["kinematic_ridge", "spearman"] > 0.3  # signal recoverable
+        assert arms.loc["core_ridge_cv", "spearman"] > 0.3
+        assert arms.loc["core_ordinal", "spearman"] > 0.3
+        # paired hypothesis-test columns vs. the naive baseline
+        assert arms.loc["naive_speed_only", "delta_spearman"] == 0.0
+        assert 0.0 <= arms.loc["core_ridge_cv", "p_vs_naive"] <= 1.0
+        # mean baseline: MAE floor only, its fold-mean "correlation" is an artifact
+        assert np.isnan(arms.loc["mean_baseline", "spearman"])
+        assert np.isfinite(arms.loc["mean_baseline", "mae"])
+
+    def test_ridge_cv_shrinks_noise_features(self):
+        """Pure-noise features at n~50: nested shrinkage must not overfit
+        worse than the mean baseline (the failure mode of fixed alpha=1)."""
+        from asl_fluency.models.baseline import make_model
+
+        rng = np.random.default_rng(1)
+        n = 50
+        feats = pd.DataFrame(rng.normal(size=(n, len(KINEMATIC_FEATURES) + 1)),
+                             columns=["letters_per_second"] + KINEMATIC_FEATURES)
+        y = rng.integers(2, 6, n).astype(float)
+        tr, te = slice(0, 40), slice(40, None)
+        mae = {}
+        for kind in ("mean", "ridge_cv"):
+            m = make_model(kind, "kinematic").fit(feats.iloc[tr], y[tr])
+            mae[kind] = np.abs(m.predict(feats.iloc[te]) - y[te]).mean()
+        assert mae["ridge_cv"] <= mae["mean"] * 1.1
+
+    def test_paired_bootstrap_delta(self):
+        from asl_fluency.evaluation.metrics import paired_bootstrap_delta
+
+        rng = np.random.default_rng(0)
+        y = rng.normal(size=80)
+        good = y + rng.normal(0, 0.3, 80)
+        noise = rng.normal(size=80)
+        same = paired_bootstrap_delta(y, good, good, iters=200)
+        assert same["delta"] == 0.0 and same["p_one_sided"] == 1.0
+        better = paired_bootstrap_delta(y, good, noise, iters=200)
+        assert better["delta"] > 0.5 and better["ci_lo"] > 0 and better["p_one_sided"] < 0.05
+
+    def test_ordinal_degenerate_fold_falls_back_to_mean(self):
+        from asl_fluency.models.baseline import make_model
+
+        feats = pd.DataFrame({"letters_per_second": [1.0, 2.0, 3.0],
+                              "log_dimless_jerk": [0.0, 1.0, 2.0],
+                              "pause_total_s": [0.1, 0.2, 0.3]})
+        m = make_model("ordinal", "core").fit(feats, np.array([4.0, 4.0, 4.0]))
+        assert np.allclose(m.predict(feats), 4.0)
+
+    def test_marginal_stratified_metrics_reports_signed_bias(self):
+        from asl_fluency.evaluation.ablation import marginal_stratified_metrics
+
+        ids = [f"c{i}" for i in range(8)]
+        y_true = pd.Series([1, 2, 3, 4, 1, 2, 3, 4], index=ids, dtype=float)
+        y_pred = y_true + np.r_[[0.0] * 4, [1.0] * 4]  # "dark" over-scored by +1
+        ctx = pd.DataFrame({"clip_id": ids,
+                            "skin_tone": ["light"] * 4 + ["dark"] * 4,
+                            "lighting": ["low", "bright"] * 4})
+        out = marginal_stratified_metrics(y_true, y_pred, ctx, ["skin_tone", "lighting"])
+        assert set(out["factor"]) == {"skin_tone", "lighting"}
+        bias = out[out.factor == "skin_tone"].set_index("stratum")["mean_signed_error"]
+        assert bias["dark"] == pytest.approx(1.0) and bias["light"] == pytest.approx(0.0)
 
     def test_stratified(self):
         y_true = pd.Series({"a": 1.0, "b": 2.0, "c": 3.0, "d": 4.0})
@@ -708,8 +768,8 @@ class TestPersist:
 
         feats = self._features()
         y = pd.Series(np.linspace(1, 5, 30), index=[f"c{i}" for i in range(30)])
-        for kind in ("naive_speed", "ridge", "gradient_boosting"):
-            fs = "naive" if kind == "naive_speed" else "kinematic"
+        for kind in ("naive_speed", "ridge", "gradient_boosting", "mean", "ridge_cv", "ordinal"):
+            fs = "naive" if kind in ("naive_speed", "mean") else "kinematic"
             m = make_model(kind, fs).fit(feats, y.to_numpy())
             blob = pickle.dumps(m)  # closure classes would raise here
             assert len(blob) > 0
@@ -787,3 +847,40 @@ class TestSparseTrackingRows:
             lm_dir, {"sparse_clip": "AB", "healthy_clip": "HELLO"}
         )
         assert table["clip_id"].tolist() == ["healthy_clip"]
+
+
+class TestClipContext:
+    def test_ita_bands(self):
+        from asl_fluency.landmarks.context import ita_band, ita_degrees
+
+        assert ita_band(ita_degrees(np.array([[80.0, 5.0, 15.0]]))) == "light"   # ~63 deg
+        assert ita_band(ita_degrees(np.array([[60.0, 10.0, 20.0]]))) == "medium"  # ~27 deg
+        assert ita_band(ita_degrees(np.array([[35.0, 12.0, 20.0]]))) == "dark"    # ~-37 deg
+        assert np.isnan(ita_degrees(np.array([[60.0, 0.0, -5.0]])))  # b*<=0: undefined
+
+    def test_clip_context_from_frame_dir(self, tmp_path):
+        """Palm patch must sample the hand colour, not the background."""
+        import cv2
+
+        from asl_fluency.landmarks.context import build_clip_context
+
+        clips, seqs = {}, tmp_path / "lm"
+        seqs.mkdir()
+        for cid, bgr in (("pale", (190, 210, 240)), ("deep", (40, 60, 95))):
+            d = tmp_path / cid
+            d.mkdir()
+            for i in range(4):
+                img = np.full((64, 64, 3), (30, 160, 30), np.uint8)  # green backdrop
+                cv2.rectangle(img, (16, 16), (48, 48), bgr, -1)     # the "hand"
+                cv2.imwrite(str(d / f"{i:04d}.png"), img)
+            lm = np.full((4, N_LANDMARKS, 3), 0.5, np.float32)
+            lm[:, 0, :2] = (0.5, 0.65)   # wrist
+            lm[:, 9, :2] = (0.5, 0.40)   # middle MCP -> palm radius ~6 px
+            LandmarkSequence(cid, lm, np.ones(4, bool), 30.0).save(seqs / f"{cid}.npz")
+            clips[cid] = d
+        clips["missing"] = tmp_path / "nope"
+        ctx = build_clip_context(clips, seqs).set_index("clip_id")
+        assert set(ctx.index) == {"pale", "deep"}
+        assert ctx.loc["pale", "ita_deg"] > ctx.loc["deep", "ita_deg"]
+        assert ctx.loc["pale", "skin_tone"] == "light"
+        assert ctx.loc["deep", "skin_tone"] == "dark"

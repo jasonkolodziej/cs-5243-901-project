@@ -9,6 +9,7 @@
     asl-fluency label-boundaries  browser UI: mark per-letter frame spans
     asl-fluency boundary-sensitivity  how much does boundary error hurt each feature?
     asl-fluency agreement    inter-rater agreement on collected ratings
+    asl-fluency clip-context objective skin-tone (ITA) / lighting strata (Section 7)
     asl-fluency evaluate     ablation + metrics against human ratings
     asl-fluency train        fit the chosen arm on all rated data, persist artifact
     asl-fluency score        apply a persisted scorer to new clips / feature rows
@@ -466,10 +467,11 @@ def train(
         None, help="default: data/ratings/ratings_intake.csv"
     ),
     kind: str | None = typer.Option(
-        None, help="naive_speed | ridge | random_forest | gradient_boosting (default: config)"
+        None, help="mean | naive_speed | ridge | ridge_cv | ordinal | random_forest | "
+        "gradient_boosting (default: config)"
     ),
     feature_set: str | None = typer.Option(
-        None, help="naive | kinematic | full (default: config)"
+        None, help="naive | core | kinematic | kinematic_robust | full (default: config)"
     ),
     out: Path | None = typer.Option(
         None, help="default: data/processed/fluency_scorer.joblib"
@@ -595,17 +597,69 @@ def agreement(
 
 
 @app.command()
+def clip_context(
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ratings: Path | None = typer.Option(
+        None, help="clips to describe (default: data/ratings/ratings_intake.csv)"
+    ),
+    all_clips: bool = typer.Option(
+        False, "--all", help="every clip with landmarks, not just the rated ones"
+    ),
+    out: Path | None = typer.Option(None, help="default: data/ratings/clip_context.csv"),
+    force: bool = typer.Option(False, help="overwrite an existing clip_context.csv"),
+) -> None:
+    """Objective skin-tone (ITA) / lighting strata for the Section 7 fairness eval.
+
+    Measures palm-pixel ITA and frame luminance from the clip media, located
+    by the extracted landmarks — no human annotation needed. A proxy, not a
+    demographic label: see landmarks/context.py for the caveats.
+    """
+    from .landmarks.context import build_clip_context
+
+    cfg = load_config(config)
+    out = out or resolve_path(cfg, "ratings_dir") / "clip_context.csv"
+    if out.exists() and not force:
+        typer.echo(f"{out} exists (may be hand-annotated); pass --force to overwrite.")
+        raise typer.Exit(code=1)
+    media = _load_clip_paths(cfg)
+    if not all_clips:
+        ratings = ratings or resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
+        rated = set(pd.read_csv(ratings, dtype={"clip_id": str})["clip_id"])
+        media = {c: p for c, p in media.items() if c in rated}
+    ctx = build_clip_context(media, resolve_path(cfg, "interim_dir") / "landmarks")
+    if ctx.empty:
+        typer.echo("No clips with both media and landmarks; run `landmarks` first.")
+        raise typer.Exit(code=1)
+    ctx.to_csv(out, index=False)
+    typer.echo(ctx[["skin_tone", "lighting"]].value_counts(dropna=False).to_string())
+    typer.echo(f"{len(ctx)} clips -> {out}")
+
+
+@app.command()
 def evaluate(
     ratings: Path = typer.Argument(..., help="long-format ratings CSV"),
     config: Path | None = typer.Option(None, "--config", "-c"),
+    rater: str | None = typer.Option(
+        None, help="score against one rater only (single-rater pilot / low-ICC fallback)"
+    ),
 ) -> None:
     """Ablation: naive vs. kinematic arms against consensus human ratings."""
     from .data.fluency_labels import consensus_scores, load_ratings, split_ai_raters
-    from .evaluation.ablation import run_ablation, stratified_metrics
+    from .evaluation.ablation import (
+        PRIMARY_ARM,
+        marginal_stratified_metrics,
+        run_ablation,
+    )
 
     cfg = load_config(config)
     scale = tuple(cfg["labels"]["rating_scale"])
     df = load_ratings(ratings, scale)
+    if rater:
+        df = df[df["rater_id"] == rater]
+        if df.empty:
+            typer.echo(f"No ratings from rater '{rater}' in {ratings}.")
+            raise typer.Exit(code=1)
+        typer.echo(f"single-rater evaluation: {rater} ({len(df)} clips)")
     human, ai = split_ai_raters(df)
     if not ai.empty:
         typer.echo(f"note: {len(ai)} AI-judge rows excluded from the human consensus.")
@@ -613,7 +667,7 @@ def evaluate(
     per_clip = human.groupby("clip_id")["rater_id"].nunique()
     min_raters = cfg["labels"].get("min_raters_per_clip", 3)
     thin = per_clip[per_clip < min_raters]
-    if len(thin):
+    if len(thin) and not rater:
         typer.echo(
             f"Warning: {len(thin)} clips have fewer than {min_raters} human raters; "
             "their consensus scores are noisy."
@@ -644,22 +698,31 @@ def evaluate(
                 f"folds from {n_splits} to {n_groups}."
             )
             n_splits = n_groups
-    summary, details = run_ablation(feats, y, group_col=group_col, n_splits=n_splits)
-    typer.echo(summary.to_string(index=False))
-    out = resolve_path(cfg, "processed_dir") / "ablation_results.csv"
+    summary, details = run_ablation(
+        feats, y, group_col=group_col, n_splits=n_splits,
+        bootstrap_iters=cfg["evaluation"].get("bootstrap_iters", 1000),
+    )
+    with pd.option_context("display.width", 200, "display.max_columns", None):
+        typer.echo(summary.round(3).to_string(index=False))
+    suffix = f"_{rater}" if rater else ""
+    out = resolve_path(cfg, "processed_dir") / f"ablation_results{suffix}.csv"
     summary.to_csv(out, index=False)
 
     # Stratified fairness evaluation (proposal Section 7), if context exists.
-    best = max(details, key=lambda k: details[k]["folds"]["spearman"].mean())
-    oof = details[best]["oof"]
+    # Uses the pre-registered primary arm — picking the CV winner here would
+    # be a post-hoc choice on the same held-out predictions.
+    oof = details[PRIMARY_ARM]["oof"] if PRIMARY_ARM in details else next(
+        iter(details.values()))["oof"]
     context_path = resolve_path(cfg, "ratings_dir") / "clip_context.csv"
     if context_path.exists():
         ctx = pd.read_csv(context_path, dtype={"clip_id": str})
-        strata = stratified_metrics(y, oof, ctx, cfg["evaluation"]["stratify_by"])
-        typer.echo("\nStratified metrics:")
-        typer.echo(strata.to_string(index=False))
-        strata.to_csv(resolve_path(cfg, "processed_dir") / "stratified_results.csv",
-                      index=False)
+        strata = marginal_stratified_metrics(y, oof, ctx, cfg["evaluation"]["stratify_by"])
+        typer.echo(f"\nStratified metrics ({PRIMARY_ARM}):")
+        typer.echo(strata.round(3).to_string(index=False))
+        strata.to_csv(
+            resolve_path(cfg, "processed_dir") / f"stratified_results{suffix}.csv",
+            index=False,
+        )
     typer.echo(f"results -> {out}")
 
 
