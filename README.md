@@ -40,7 +40,7 @@ _Last updated 2026-11-16. Ratings cutoff **2026-11-17 at 11:59 PM**, final deadl
 | # | Task | Owner | Needs | Due |
 |---|---|---|---|---|
 | 1 | Open PR `feat/pilot-modelling` → `chore/rating-sheet` | Jason | — | 11-17 |
-| 2 | Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | instructors | — | **11-17, 11:59 PM** |
+| 2 | Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | maya, divine | — | **11-17, 11:59 PM** |
 | 3 | Hand-label letter boundaries on the 50 rated clips (`label-boundaries`) | team | — | 11-20 |
 | 4 | Draft paper: intro, related work, methods, dataset, boundary sensitivity, pilot | team | — | 11-24 |
 | 5 | `agreement` (ICC ≥ 0.6?) then `evaluate` **once** on the final consensus | Jason | 2 | 11-18 |
