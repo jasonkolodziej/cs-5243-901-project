@@ -27,12 +27,12 @@ Submit a one-page proposal containing:
 
 ## 3. Midterm Progress Checkpoint (50 points, Group)
 
-- [ ] Submit a 3–5 minute recorded presentation.
-- [ ] Submit a short written progress report accompanying the presentation.
-- [ ] Summarize progress completed.
-- [ ] Present preliminary experimental results.
-- [ ] Discuss challenges encountered.
-- [ ] Outline the remaining work.
+- [x] Submit a 3–5 minute recorded presentation.
+- [x] Submit a short written progress report accompanying the presentation.
+- [x] Summarize progress completed.
+- [x] Present preliminary experimental results.
+- [x] Discuss challenges encountered.
+- [x] Outline the remaining work.
 
 ### Tasks
 

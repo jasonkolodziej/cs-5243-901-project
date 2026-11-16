@@ -884,3 +884,59 @@ class TestClipContext:
         assert ctx.loc["pale", "ita_deg"] > ctx.loc["deep", "ita_deg"]
         assert ctx.loc["pale", "skin_tone"] == "light"
         assert ctx.loc["deep", "skin_tone"] == "dark"
+
+
+class TestProjectSite:
+    """The webpage must re-frame itself as ratings arrive (pilot -> consensus)."""
+
+    @staticmethod
+    def _data(n_raters, noise, seed=0):
+        from asl_fluency.features.pipeline import FEATURE_SETS
+
+        rng = np.random.default_rng(seed)
+        n = 40
+        cols = FEATURE_SETS["kinematic"]
+        feats = pd.DataFrame(rng.normal(size=(n, len(cols))), columns=cols)
+        feats["clip_id"] = [f"c{i}" for i in range(n)]
+        feats["signer_id"] = [i % 10 for i in range(n)]
+        feats["detection_rate"] = 1.0
+        truth = np.clip(np.rint(3 + feats["log_dimless_jerk"]), 1, 5)
+        sheet = pd.concat([
+            pd.DataFrame({"clip_id": feats["clip_id"], "rater_id": f"r{k}",
+                          "rating": np.clip(np.rint(truth + rng.normal(0, noise, n)), 1, 5)
+                          if k < n_raters else np.nan})
+            for k in range(3)
+        ])
+        return sheet, feats
+
+    def test_framing(self):
+        from asl_fluency.site import framing
+
+        assert framing(1, None) == "pilot"
+        assert framing(3, float("nan")) == "pilot"
+        assert framing(3, 0.85) == "consensus"
+        assert framing(3, 0.3) == "low_agreement"
+
+    @pytest.mark.parametrize(("n_raters", "noise", "expected"), [
+        (1, 0.0, "pilot"), (3, 0.2, "consensus"), (3, 3.0, "low_agreement"),
+    ])
+    def test_results_and_page_follow_the_ratings(self, tmp_path, n_raters, noise, expected):
+        import json
+
+        from asl_fluency.site import compute_site_results, render_site
+
+        sheet, feats = self._data(n_raters, noise)
+        res = compute_site_results(sheet, feats, n_splits=3, bootstrap_iters=50)
+        assert res["framing"] == expected
+        assert res["n_active_raters"] == n_raters
+        assert res["hypothesis"] is not None
+        assert (res["agreement"] is None) == (n_raters == 1)
+
+        index = render_site(res, tmp_path, {"title": "T", "tagline": "t", "course": "C",
+                                            "authors": ["A"], "repo_url": "https://x"})
+        page = index.read_text()
+        banner = {"pilot": "single-rater pilot", "consensus": "consensus of 3 raters",
+                  "low_agreement": "low agreement"}[expected]
+        assert banner in page
+        assert "(coming soon)" in page  # empty links render disabled, not broken
+        json.loads((tmp_path / "results.json").read_text())  # written with allow_nan=False

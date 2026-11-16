@@ -49,6 +49,12 @@ _Last updated 2026-11-16. Ratings cutoff **2026-11-23**, final deadline **2026-1
 | 8 | Fairness write-up (stratified metrics, tracker-quality gap, ITA caveats) | team | 7 | 11-27 |
 | 9 | Optional: rating batch 2 (`rating-sheet --batch 2`) — only if CIs too wide **and** time allows | team | 5 | 11-27 |
 | 10 | Final revisions, figures, limitations; submit | team | 7, 8 | **12-02** |
+| 11 | Enable GitHub Pages (Settings → Pages → Source: GitHub Actions); add slide / video links to `site:` in `configs/default.yaml` | Jason | — | 11-20 |
+
+**Project webpage:** built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) from
+committed data on every push to `main` — committing the instructor ratings automatically updates
+the published numbers and switches the page from "single-rater pilot" to "consensus" framing.
+See [`asl-fluency/README.md`](asl-fluency/README.md#project-webpage-github-pages).
 
 Out of scope for the deadline (future work in the paper): CTC forced aligner (Roadmap Gap 1
 step 3) and the video-fusion arm (Gap 2).

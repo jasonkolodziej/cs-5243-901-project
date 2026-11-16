@@ -63,3 +63,15 @@ model:
 evaluation:
   stratify_by: [skin_tone, lighting] # fairness slices from proposal Section 7
   bootstrap_iters: 1000
+
+site:
+  # Project webpage (`asl-fluency site`, deployed by .github/workflows/pages.yml).
+  # Empty URLs render as "coming soon" buttons — fill them in as links exist.
+  title: Automated Fluency and Speed Scoring for ASL Fingerspelling
+  tagline: Scoring how well, not what, is fingerspelled — from hand-landmark kinematics.
+  course: CS 5243-901
+  authors: [Maya Steele, Jason Kolodziej, Oghenefejiro Fogeh]
+  repo_url: https://github.com/jasonkolodziej/cs-5243-901-project
+  notebook_url: https://github.com/jasonkolodziej/cs-5243-901-project/blob/main/asl-fluency/notebooks/01_pilot_modelling_and_fairness.ipynb
+  slides_url: ""
+  video_url: ""

@@ -11,6 +11,7 @@
     asl-fluency agreement    inter-rater agreement on collected ratings
     asl-fluency clip-context objective skin-tone (ITA) / lighting strata (Section 7)
     asl-fluency evaluate     ablation + metrics against human ratings
+    asl-fluency site         project webpage (GitHub Pages) from committed data
     asl-fluency train        fit the chosen arm on all rated data, persist artifact
     asl-fluency score        apply a persisted scorer to new clips / feature rows
 """
@@ -724,6 +725,44 @@ def evaluate(
             index=False,
         )
     typer.echo(f"results -> {out}")
+
+
+@app.command()
+def site(
+    out: Path = typer.Option(Path("_site"), help="output directory for the static site"),
+    config: Path | None = typer.Option(None, "--config", "-c"),
+    ratings: Path | None = typer.Option(
+        None, help="default: data/ratings/ratings_intake.csv"
+    ),
+) -> None:
+    """Project webpage: recompute results from committed data, render static HTML.
+
+    Run by the GitHub Pages workflow on every push that changes ratings, so the
+    published numbers (and the pilot / consensus framing) always match the repo.
+    """
+    import os
+
+    from .site import compute_site_results, render_site
+
+    cfg = load_config(config)
+    ratings = ratings or resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
+    sheet = pd.read_csv(ratings, dtype={"clip_id": str, "rater_id": str})
+    feats = pd.read_csv(resolve_path(cfg, "processed_dir") / "features.csv",
+                        dtype={"clip_id": str})
+    ctx_path = resolve_path(cfg, "ratings_dir") / "clip_context.csv"
+    bnd_path = resolve_path(cfg, "processed_dir") / "boundary_sensitivity.csv"
+    results = compute_site_results(
+        sheet, feats,
+        context=pd.read_csv(ctx_path, dtype={"clip_id": str}) if ctx_path.exists() else None,
+        boundary=pd.read_csv(bnd_path) if bnd_path.exists() else None,
+        n_splits=cfg["model"]["n_splits"],
+        bootstrap_iters=cfg["evaluation"].get("bootstrap_iters", 1000),
+    )
+    meta = dict(cfg.get("site", {}))
+    meta["commit"] = os.environ.get("GITHUB_SHA", "")
+    index = render_site(results, out, meta)
+    typer.echo(f"framing: {results['framing']} | {results['n_rated_clips']} rated clips "
+               f"| {results['n_active_raters']} active raters -> {index}")
 
 
 @app.command()

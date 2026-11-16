@@ -381,6 +381,39 @@ scored).
   come from pixels (ITA proxy + luminance), not subjective annotation — a proxy
   confounded with capture conditions, and reported as such.
 
+## Project webpage (GitHub Pages)
+
+`asl-fluency site --out _site` recomputes every headline number from committed
+data (`ratings_intake.csv`, `features.csv`, `clip_context.csv`,
+`boundary_sensitivity.csv`) and renders a static page plus `results.json` and
+SVG figures. Only aggregates are published, never per-clip or per-rater scores.
+
+[`.github/workflows/pages.yml`](../.github/workflows/pages.yml) runs it (after
+the test suite) on every push to `main` that touches ratings, features, code or
+config, and deploys to GitHub Pages. The page frames itself from the data:
+
+| Raters with ratings | ICC(2,k) | Page says |
+|---|---|---|
+| < 2 | — | "Preliminary — single-rater pilot" |
+| ≥ 2 | ≥ 0.6 | "Final — consensus of N raters" |
+| ≥ 2 | < 0.6 | "Ratings complete, low agreement" (no consensus claim) |
+
+The hypothesis verdict (supported / directionally consistent / not supported)
+is also derived from the paired test, so committing the instructor ratings is
+the only step needed to update the published result. Slide / video links live
+in the `site:` section of `configs/default.yaml` (empty = "coming soon").
+
+One-time setup: repo **Settings → Pages → Source: GitHub Actions** (or
+`gh api -X POST repos/<owner>/<repo>/pages -f build_type=workflow`). Pages on a
+private repo needs GitHub Pro / Team / Enterprise (free with the Student
+Developer Pack); the published site is public either way.
+
+Preview locally:
+
+```bash
+uv run asl-fluency site --out _site && python3 -m http.server -d _site 8000
+```
+
 ## Tests
 
 ```bash
@@ -441,6 +474,7 @@ uv run pytest          # synthetic end-to-end tests, no video data required
 │       ├── ai_judge.py              # AI-judge pre-scoring: rubric prompt, clip rendering,
 │       │                            #   backends: mock (plumbing) + grok (xAI vision API)
 │       ├── config.py                # YAML loading, deep-merge, path resolution, project_root()
+│       ├── site.py                  # project webpage: recompute results, render static HTML
 │       │
 │       ├── data/                    # dataset loaders & rating utilities
 │       │   ├── __init__.py
