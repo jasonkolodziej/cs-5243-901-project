@@ -156,3 +156,4 @@ vite.config.ts.timestamp-*
 **/data/processed/stratified_results*.csv
 .agents/
 .github/
+FINAL_PRESENTATION_HANDOFF.md
