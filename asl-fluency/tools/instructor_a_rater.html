@@ -137,7 +137,7 @@
     <div class="card">
       <h2>Save to ratings_intake.csv</h2>
       <div class="note">Connect the repo's <code>asl-fluency/data/ratings/ratings_intake.csv</code>. Every click then writes straight into that file, like <code>asl-fluency rate</code>. Other raters' scores already in the file are kept. Then commit the file.</div>
-      <div class="row"><button class="primary" id="connectBtn">Connect ratings_intake.csv</button></div>
+      <div class="row"><button class="primary" id="connectBtn">Connect ratings_intake.csv</button><button id="allowBtn" style="display:none">Allow saving to the file</button></div>
       <div class="note" id="fileStatus">Not connected. Ratings are only saved in this browser until you connect the file or use Copy CSV.</div>
     </div>
 
@@ -220,8 +220,26 @@ function fileCsv(){
   return 'clip_id,rater_id,rating\n'+out.map(r=>r.join(',')).join('\n')+'\n';
 }
 let writing=Promise.resolve();
+let canWrite=false;
+async function checkWrite(){
+  try{ canWrite = (await fileHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ canWrite=false; }
+  $('allowBtn').style.display = canWrite ? 'none' : '';
+  if(!canWrite) $('fileStatus').innerHTML=`Opened <b>${fileHandle.name}</b>. One more step: click <b>Allow saving to the file</b>, then choose <b>Save changes</b> or <b>Allow</b> in Chrome's prompt.`;
+  return canWrite;
+}
+$('allowBtn').onclick=async()=>{
+  if(!fileHandle) return;
+  try{
+    const p = await fileHandle.requestPermission({mode:'readwrite'});
+    if(p!=='granted'){ $('fileStatus').innerHTML='<span class="warn">Chrome didn\'t allow saving.</span> Click the button again and choose Allow.'; return; }
+  }catch(e){
+    $('fileStatus').innerHTML=`<span class="warn">Chrome blocked the request (${e.name}).</span> Try clicking the button again.`; return;
+  }
+  await checkWrite();
+  if(canWrite){ writeFile(); toast('Saving to the file is on'); }
+};
 function writeFile(){
-  if(!fileHandle || !fileRows) return;
+  if(!fileHandle || !fileRows || !canWrite) return;
   const text=fileCsv();
   writing = writing.then(async()=>{
     try{
@@ -229,7 +247,8 @@ function writeFile(){
       const n=BATCH.filter(c=>ratings[c]).length;
       $('fileStatus').innerHTML=`Connected to <b>${fileHandle.name}</b>. Saved ${n} of 50 ${rater} ratings at ${new Date().toLocaleTimeString()}.`;
     }catch(e){
-      $('fileStatus').innerHTML=`<span class="warn">Couldn't write to the file (${e.name}).</span> Click Connect again, or use Copy CSV.`;
+      canWrite=false; $('allowBtn').style.display='';
+      $('fileStatus').innerHTML=`<span class="warn">Couldn't save to the file (${e.name}).</span> Click <b>Allow saving to the file</b>, or use Copy CSV. Your ratings are still kept in this browser.`;
     }
   });
 }
@@ -240,8 +259,6 @@ $('connectBtn').onclick=async()=>{
   }
   try{
     const [h]=await window.showOpenFilePicker({types:[{description:'CSV',accept:{'text/csv':['.csv']}}]});
-    const perm = await h.requestPermission({mode:'readwrite'});
-    if(perm!=='granted'){ $('fileStatus').innerHTML='<span class="warn">Write permission wasn\'t granted.</span>'; return; }
     const text=await (await h.getFile()).text();
     const rows=parseCsv(text);
     if(!rows.some(r=>CLIPSET.has(r[0]))){ $('fileStatus').innerHTML='<span class="warn">That file doesn\'t contain the batch clips.</span> Pick asl-fluency/data/ratings/ratings_intake.csv.'; return; }
@@ -251,8 +268,9 @@ $('connectBtn').onclick=async()=>{
     // ratings already in the file for this rater fill any gaps in this browser
     let pulled=0;
     rows.forEach(([c,r,v])=>{ if(CLIPSET.has(c) && r===rater && /^[1-5]$/.test(v) && ratings[c]==null){ ratings[c]=+v; pulled++; } });
+    await checkWrite();
     save(); show();
-    toast(pulled ? `Connected. Loaded ${pulled} saved ratings from the file.` : 'Connected. Ratings now save to the file.');
+    toast(pulled ? `Opened. Loaded ${pulled} saved ratings from the file.` : 'File opened');
   }catch(e){
     if(e.name!=='AbortError') $('fileStatus').innerHTML=`<span class="warn">Couldn't open the file (${e.name}).</span>`;
   }
