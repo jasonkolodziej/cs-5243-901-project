@@ -135,6 +135,13 @@
     </div>
 
     <div class="card">
+      <h2>Save to ratings_intake.csv</h2>
+      <div class="note">Connect the repo's <code>asl-fluency/data/ratings/ratings_intake.csv</code>. Every click then writes straight into that file, like <code>asl-fluency rate</code>. Other raters' scores already in the file are kept. Then commit the file.</div>
+      <div class="row"><button class="primary" id="connectBtn">Connect ratings_intake.csv</button></div>
+      <div class="note" id="fileStatus">Not connected. Ratings are only saved in this browser until you connect the file or use Copy CSV.</div>
+    </div>
+
+    <div class="card">
       <h2>3 · Export</h2>
       <div class="row">
         <select id="exportMode">
@@ -187,7 +194,69 @@ let idx = store.get('fsr_idx') || 0;
 const media = {}; // clip -> {type:'frames', urls:[...]} | {type:'video', url}
 let timer = null, frame = 0;
 
-function save(){ store.set('fsr_ratings_'+rater, ratings); store.set('fsr_idx', idx); store.set('fsr_rater', rater); }
+function save(){ store.set('fsr_ratings_'+rater, ratings); store.set('fsr_idx', idx); store.set('fsr_rater', rater); writeFile(); }
+
+// ---- Direct write to ratings_intake.csv (File System Access API, Chrome/Edge) ----
+let fileHandle = null;
+let fileRows = null; // [[clip, rater, rating], ...] in the file's original order
+function parseCsv(text){
+  const rows=[];
+  text.split(/\r?\n/).forEach((line,i)=>{
+    if(!line.trim()) return;
+    const p=line.split(',').map(s=>s.trim());
+    if(i===0 && p[0]==='clip_id') return;
+    rows.push([p[0], p[1], p[2]||'']);
+  });
+  return rows;
+}
+function fileCsv(){
+  // keep every existing row (all raters, all clips) in order; overwrite only this rater's cells
+  const seen=new Set();
+  const out=fileRows.map(([c,r,v])=>{
+    if(r===rater && CLIPSET.has(c)){ seen.add(c); return [c,r, ratings[c]!=null ? String(ratings[c]) : '']; }
+    return [c,r,v];
+  });
+  BATCH.forEach(c=>{ if(!seen.has(c) && ratings[c]!=null) out.push([c,rater,String(ratings[c])]); });
+  return 'clip_id,rater_id,rating\n'+out.map(r=>r.join(',')).join('\n')+'\n';
+}
+let writing=Promise.resolve();
+function writeFile(){
+  if(!fileHandle || !fileRows) return;
+  const text=fileCsv();
+  writing = writing.then(async()=>{
+    try{
+      const w=await fileHandle.createWritable(); await w.write(text); await w.close();
+      const n=BATCH.filter(c=>ratings[c]).length;
+      $('fileStatus').innerHTML=`Connected to <b>${fileHandle.name}</b>. Saved ${n} of 50 ${rater} ratings at ${new Date().toLocaleTimeString()}.`;
+    }catch(e){
+      $('fileStatus').innerHTML=`<span class="warn">Couldn't write to the file (${e.name}).</span> Click Connect again, or use Copy CSV.`;
+    }
+  });
+}
+$('connectBtn').onclick=async()=>{
+  if(!window.showOpenFilePicker){
+    $('fileStatus').innerHTML='<span class="warn">This browser or view can\'t write files directly.</span> Open the page from the repo in Chrome, or use Copy CSV.';
+    return;
+  }
+  try{
+    const [h]=await window.showOpenFilePicker({types:[{description:'CSV',accept:{'text/csv':['.csv']}}]});
+    const perm = await h.requestPermission({mode:'readwrite'});
+    if(perm!=='granted'){ $('fileStatus').innerHTML='<span class="warn">Write permission wasn\'t granted.</span>'; return; }
+    const text=await (await h.getFile()).text();
+    const rows=parseCsv(text);
+    if(!rows.some(r=>CLIPSET.has(r[0]))){ $('fileStatus').innerHTML='<span class="warn">That file doesn\'t contain the batch clips.</span> Pick asl-fluency/data/ratings/ratings_intake.csv.'; return; }
+    fileHandle=h; fileRows=rows;
+    // pull other raters' current scores from the file so exports stay in sync
+    rows.forEach(([c,r,v])=>{ if(CLIPSET.has(c) && r!==rater){ existing[c][r]=v; } });
+    // ratings already in the file for this rater fill any gaps in this browser
+    let pulled=0;
+    rows.forEach(([c,r,v])=>{ if(CLIPSET.has(c) && r===rater && /^[1-5]$/.test(v) && ratings[c]==null){ ratings[c]=+v; pulled++; } });
+    save(); show();
+    toast(pulled ? `Connected. Loaded ${pulled} saved ratings from the file.` : 'Connected. Ratings now save to the file.');
+  }catch(e){
+    if(e.name!=='AbortError') $('fileStatus').innerHTML=`<span class="warn">Couldn't open the file (${e.name}).</span>`;
+  }
+};
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),1600); }
 
 // ---- Loading ----
