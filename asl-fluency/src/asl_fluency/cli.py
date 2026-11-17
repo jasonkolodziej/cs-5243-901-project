@@ -627,7 +627,11 @@ def clip_context(
         ratings = ratings or resolve_path(cfg, "ratings_dir") / "ratings_intake.csv"
         rated = set(pd.read_csv(ratings, dtype={"clip_id": str})["clip_id"])
         media = {c: p for c, p in media.items() if c in rated}
-    ctx = build_clip_context(media, resolve_path(cfg, "interim_dir") / "landmarks")
+    ctx = build_clip_context(
+        media,
+        resolve_path(cfg, "interim_dir") / "landmarks",
+        default_fps=float(cfg["landmarks"].get("default_fps", 30.0)),
+    )
     if ctx.empty:
         typer.echo("No clips with both media and landmarks; run `landmarks` first.")
         raise typer.Exit(code=1)

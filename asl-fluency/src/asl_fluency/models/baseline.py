@@ -95,9 +95,12 @@ class OrdinalScorer:
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                self.res_ = OrderedModel(endog, Z, distr="logit").fit(
+                result = OrderedModel(endog, Z, distr="logit").fit(
                     method="bfgs", disp=False, maxiter=500
                 )
+            if (result.mle_retvals.get("converged", False)
+                    and np.isfinite(np.asarray(result.params, dtype=float)).all()):
+                self.res_ = result
         except (np.linalg.LinAlgError, ValueError):
             self.res_ = None
         return self

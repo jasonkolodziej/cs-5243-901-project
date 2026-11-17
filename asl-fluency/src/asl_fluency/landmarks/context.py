@@ -76,36 +76,58 @@ def _palm_patch(lab: np.ndarray, lm: np.ndarray) -> np.ndarray:
 
 
 def clip_context_row(
-    media: str | Path, seq: LandmarkSequence, max_frames: int = 16
+    media: str | Path, seq: LandmarkSequence, max_frames: int = 16, default_fps: float = 30.0
 ) -> dict:
     """Raw context measurements for one clip (no bucketing)."""
-    cap, _ = open_frame_source(media)
-    frames = []
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frames.append(frame)
-    if hasattr(cap, "release"):
-        cap.release()
-
-    n = min(len(frames), seq.n_frames)
-    ok_idx = [i for i in range(n) if seq.frame_ok[i]]
-    all_idx = np.linspace(0, n - 1, min(n, max_frames)).round().astype(int) if n else []
-    hand_idx = (
-        [ok_idx[i] for i in np.linspace(0, len(ok_idx) - 1, min(len(ok_idx), max_frames))
-         .round().astype(int)] if ok_idx else []
+    cap, source_fps = open_frame_source(media, default_fps=default_fps)
+    frame_count = (
+        len(cap.files) if hasattr(cap, "files")
+        else int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     )
+    step = max(1, round(source_fps / seq.fps)) if seq.fps > 0 else 1
+    ok_idx = np.flatnonzero(seq.frame_ok)
+    if len(ok_idx):
+        sample_count = min(len(ok_idx), max(1, max_frames))
+        ok_idx = ok_idx[
+            np.linspace(0, len(ok_idx) - 1, sample_count).round().astype(int)
+        ]
+    source_hand_idx = {
+        int(i * step): int(i)
+        for i in ok_idx
+        if frame_count <= 0 or i * step < frame_count
+    }
+    if frame_count > 0:
+        sample_count = min(frame_count, max(1, max_frames))
+        luma_idx = set(np.linspace(0, frame_count - 1, sample_count).round().astype(int))
+    else:
+        luma_idx = None
 
-    luma = [float(_to_lab(frames[i])[..., 0].mean()) for i in all_idx]
-    patches = [_palm_patch(_to_lab(frames[i]), seq.landmarks[i]) for i in hand_idx]
+    luma, patches = [], []
+    try:
+        source_idx = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if luma_idx is None or source_idx in luma_idx or source_idx in source_hand_idx:
+                lab = _to_lab(frame)
+                if luma_idx is None or source_idx in luma_idx:
+                    luma.append(float(lab[..., 0].mean()))
+                if source_idx in source_hand_idx:
+                    seq_idx = source_hand_idx[source_idx]
+                    patches.append(_palm_patch(lab, seq.landmarks[seq_idx]))
+            source_idx += 1
+    finally:
+        if hasattr(cap, "release"):
+            cap.release()
+
     palm = np.concatenate(patches) if patches else np.empty((0, 3))
     return {
         "clip_id": seq.clip_id,
         "luma_L": float(np.mean(luma)) if luma else np.nan,
         "ita_deg": ita_degrees(palm),
         "n_palm_pixels": len(palm),
-        "n_hand_frames": len(hand_idx),
+        "n_hand_frames": len(patches),
     }
 
 
@@ -116,15 +138,21 @@ def bucket_context(raw: pd.DataFrame) -> pd.DataFrame:
     valid = out["luma_L"].notna()
     out["lighting"] = pd.Series(np.nan, index=out.index, dtype=object)
     if valid.sum() >= 3:
-        out.loc[valid, "lighting"] = pd.qcut(
-            out.loc[valid, "luma_L"], 3, labels=["low", "normal", "bright"]
-        ).astype(str)
+        values = out.loc[valid, "luma_L"]
+        edges = np.quantile(values, [0, 1 / 3, 2 / 3, 1])
+        if np.all(np.diff(edges) > 0):
+            out.loc[valid, "lighting"] = pd.cut(
+                values, bins=edges, labels=["low", "normal", "bright"], include_lowest=True
+            ).astype(str)
     out["context_source"] = "auto_ita_luma"
     return out
 
 
 def build_clip_context(
-    clip_media: dict[str, Path], landmark_dir: str | Path, max_frames: int = 16
+    clip_media: dict[str, Path],
+    landmark_dir: str | Path,
+    max_frames: int = 16,
+    default_fps: float = 30.0,
 ) -> pd.DataFrame:
     """Context table for every clip that has both media and landmarks."""
     rows = []
@@ -133,7 +161,9 @@ def build_clip_context(
         if not npz.exists() or not Path(media).exists():
             continue
         try:
-            rows.append(clip_context_row(media, LandmarkSequence.load(npz), max_frames))
+            rows.append(clip_context_row(
+                media, LandmarkSequence.load(npz), max_frames, default_fps
+            ))
         except OSError:
             continue  # unreadable media for one clip must not abort the batch
     cols = ["clip_id", "luma_L", "ita_deg", "n_palm_pixels", "n_hand_frames"]

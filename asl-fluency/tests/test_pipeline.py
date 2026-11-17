@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from asl_fluency.evaluation.ablation import run_ablation, stratified_metrics
+from asl_fluency.evaluation.ablation import (
+    marginal_stratified_metrics,
+    run_ablation,
+    stratified_metrics,
+)
 from asl_fluency.evaluation.agreement import agreement_report, cohen_kappa, fleiss_kappa, icc_2k
 from asl_fluency.evaluation.metrics import bootstrap_ci, compute_metrics
 from asl_fluency.features.pipeline import KINEMATIC_FEATURES, compute_feature_row
@@ -228,7 +232,7 @@ class TestAblation:
         assert mae["ridge_cv"] <= mae["mean"] * 1.1
 
     def test_paired_bootstrap_delta(self):
-        from asl_fluency.evaluation.metrics import paired_bootstrap_delta
+        from asl_fluency.evaluation.metrics import _bootstrap_indices, paired_bootstrap_delta
 
         rng = np.random.default_rng(0)
         y = rng.normal(size=80)
@@ -238,6 +242,45 @@ class TestAblation:
         assert same["delta"] == 0.0 and same["p_one_sided"] == 1.0
         better = paired_bootstrap_delta(y, good, noise, iters=200)
         assert better["delta"] > 0.5 and better["ci_lo"] > 0 and better["p_one_sided"] < 0.05
+        groups = np.array(["a", "a", "b", "b", "b", "c"])
+        sampled = _bootstrap_indices(np.random.default_rng(2), len(groups), groups)
+        counts = np.bincount(sampled, minlength=len(groups))
+        assert counts[0] == counts[1]
+        assert counts[2] == counts[3] == counts[4]
+
+    def test_run_ablation_passes_aligned_signer_ids_to_bootstraps(self, monkeypatch):
+        import asl_fluency.evaluation.ablation as ablation
+
+        ids = ["c0", "c1", "c2", "c3"]
+        features = pd.DataFrame({
+            "clip_id": ids,
+            "signer_id": ["s1", "s1", "s2", "s3"],
+            "letters_per_second": [1.0, 2.0, 3.0, 4.0],
+        })
+        y = pd.Series([1.0, 2.0, 3.0, 4.0], index=ids)
+        captured = []
+
+        def fake_cv(factory, features, y, **kwargs):
+            return pd.Series(y.to_numpy(), index=features["clip_id"]), pd.DataFrame()
+
+        def fake_ci(y_true, y_pred, **kwargs):
+            captured.append(np.asarray(kwargs["groups"]))
+            return {"spearman": (0.0, 1.0), "pearson": (0.0, 1.0), "mae": (0.0, 1.0)}
+
+        def fake_delta(y_true, pred_a, pred_b, **kwargs):
+            captured.append(np.asarray(kwargs["groups"]))
+            return {"delta": 0.0, "ci_lo": 0.0, "ci_hi": 0.0, "p_one_sided": 1.0}
+
+        monkeypatch.setattr(ablation, "cross_validate", fake_cv)
+        monkeypatch.setattr(ablation, "bootstrap_ci", fake_ci)
+        monkeypatch.setattr(ablation, "paired_bootstrap_delta", fake_delta)
+        arms = [
+            {"name": ablation.BASELINE_ARM, "kind": "naive_speed", "feature_set": "naive"},
+            {"name": "core", "kind": "ridge_cv", "feature_set": "core"},
+        ]
+        ablation.run_ablation(features, y, arms=arms, bootstrap_iters=1, group_col=None)
+        assert len(captured) == 3
+        assert all(groups.tolist() == features["signer_id"].tolist() for groups in captured)
 
     def test_ordinal_degenerate_fold_falls_back_to_mean(self):
         from asl_fluency.models.baseline import make_model
@@ -248,9 +291,31 @@ class TestAblation:
         m = make_model("ordinal", "core").fit(feats, np.array([4.0, 4.0, 4.0]))
         assert np.allclose(m.predict(feats), 4.0)
 
-    def test_marginal_stratified_metrics_reports_signed_bias(self):
-        from asl_fluency.evaluation.ablation import marginal_stratified_metrics
+    @pytest.mark.parametrize(
+        ("converged", "params"), [(False, [0.0]), (True, [np.nan])]
+    )
+    def test_ordinal_rejects_unusable_fit(self, monkeypatch, converged, params):
+        from types import SimpleNamespace
 
+        from statsmodels.miscmodels.ordinal_model import OrderedModel
+
+        from asl_fluency.features.pipeline import FEATURE_SETS
+        from asl_fluency.models.baseline import OrdinalScorer
+
+        monkeypatch.setattr(
+            OrderedModel,
+            "fit",
+            lambda *args, **kwargs: SimpleNamespace(
+                mle_retvals={"converged": converged}, params=np.asarray(params)
+            ),
+        )
+        cols = FEATURE_SETS["core"]
+        feats = pd.DataFrame(np.arange(18, dtype=float).reshape(6, 3), columns=cols)
+        model = OrdinalScorer(cols).fit(feats, np.array([1, 2, 3, 4, 5, 3], dtype=float))
+        assert model.res_ is None
+        assert np.allclose(model.predict(feats), 3.0)
+
+    def test_marginal_stratified_metrics_reports_signed_bias(self):
         ids = [f"c{i}" for i in range(8)]
         y_true = pd.Series([1, 2, 3, 4, 1, 2, 3, 4], index=ids, dtype=float)
         y_pred = y_true + np.r_[[0.0] * 4, [1.0] * 4]  # "dark" over-scored by +1
@@ -261,6 +326,14 @@ class TestAblation:
         assert set(out["factor"]) == {"skin_tone", "lighting"}
         bias = out[out.factor == "skin_tone"].set_index("stratum")["mean_signed_error"]
         assert bias["dark"] == pytest.approx(1.0) and bias["light"] == pytest.approx(0.0)
+
+    def test_marginal_stratified_metrics_skips_unmatched_context(self):
+        y_true = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"])
+        y_pred = y_true + 0.1
+        context = pd.DataFrame({"clip_id": ["x", "y"], "skin_tone": ["light", "dark"]})
+        assert marginal_stratified_metrics(
+            y_true, y_pred, context, ["skin_tone"]
+        ).empty
 
     def test_stratified(self):
         y_true = pd.Series({"a": 1.0, "b": 2.0, "c": 3.0, "d": 4.0})
@@ -884,6 +957,38 @@ class TestClipContext:
         assert ctx.loc["pale", "ita_deg"] > ctx.loc["deep", "ita_deg"]
         assert ctx.loc["pale", "skin_tone"] == "light"
         assert ctx.loc["deep", "skin_tone"] == "dark"
+
+    def test_context_streams_and_aligns_subsampled_frames(self, tmp_path, monkeypatch):
+        import cv2
+
+        import asl_fluency.landmarks.context as context
+
+        clip = tmp_path / "clip"
+        clip.mkdir()
+        for i in range(6):
+            cv2.imwrite(str(clip / f"{i:04d}.png"), np.full((8, 8, 3), i * 10, np.uint8))
+        landmarks = np.full((3, N_LANDMARKS, 3), 0.5, np.float32)
+        seq = LandmarkSequence("clip", landmarks, np.ones(3, bool), 30.0)
+        palm_frames = []
+        monkeypatch.setattr(context, "_to_lab", lambda frame: frame.astype(float))
+        monkeypatch.setattr(
+            context,
+            "_palm_patch",
+            lambda lab, lm: (palm_frames.append(int(lab[0, 0, 0]))
+                             or np.ones((1, 3), dtype=float)),
+        )
+        row = context.clip_context_row(clip, seq, max_frames=16, default_fps=60.0)
+        assert palm_frames == [0, 20, 40]
+        assert row["n_hand_frames"] == 3
+        assert row["luma_L"] == pytest.approx(25.0)
+
+    def test_lighting_tertiles_are_undefined_when_quantiles_tie(self):
+        from asl_fluency.landmarks.context import bucket_context
+
+        raw = pd.DataFrame({"clip_id": list("abcd"), "ita_deg": [50.0] * 4,
+                            "luma_L": [10.0, 10.0, 20.0, 20.0]})
+        out = bucket_context(raw)
+        assert out["lighting"].isna().all()
 
 
 class TestProjectSite:

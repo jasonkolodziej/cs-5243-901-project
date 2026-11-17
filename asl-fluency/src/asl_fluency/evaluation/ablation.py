@@ -59,8 +59,19 @@ def run_ablation(
         factory = lambda a=arm: make_model(a["kind"], a["feature_set"])
         oof, folds = cross_validate(factory, features, y, **cv_kw)
         y_true = y.reindex(oof.index).to_numpy(dtype=float)
+        group_col = "signer_id" if "signer_id" in features.columns else cv_kw.get(
+            "group_col", "signer_id"
+        )
+        groups = None
+        if group_col and group_col in features.columns:
+            indexed_features = (
+                features.set_index("clip_id") if "clip_id" in features.columns else features
+            )
+            groups = indexed_features[group_col].reindex(oof.index)
         m = compute_metrics(y_true, oof.to_numpy()).as_dict()
-        ci = bootstrap_ci(y_true, oof.to_numpy(), iters=bootstrap_iters)
+        ci = bootstrap_ci(
+            y_true, oof.to_numpy(), iters=bootstrap_iters, groups=groups
+        )
         if arm["kind"] == "mean":
             # Fold means are anti-correlated with held-out ratings by
             # construction (dropping high-rated clips lowers the fold mean),
@@ -92,7 +103,8 @@ def run_ablation(
                 continue
             t = paired_bootstrap_delta(y_true, oof.to_numpy(),
                                        base.reindex(oof.index).to_numpy(),
-                                       iters=bootstrap_iters)
+                                       iters=bootstrap_iters,
+                                       groups=groups)
             tests.append({"delta_spearman": t["delta"],
                           "delta_ci": (t["ci_lo"], t["ci_hi"]),
                           "p_vs_naive": t["p_one_sided"]})
@@ -140,6 +152,8 @@ def marginal_stratified_metrics(
         if col not in context.columns:
             continue
         t = stratified_metrics(y_true, y_pred, context, [col])
+        if t.empty:
+            continue
         df = context.set_index("clip_id")[[col]].join(
             pd.DataFrame({"y_true": y_true, "y_pred": y_pred})
         ).dropna(subset=["y_true", "y_pred"])
