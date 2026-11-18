@@ -5,6 +5,11 @@ Fingerspelling"** (Steele, Kolodziej, Fogeh). The system scores *how fluently* s
 fingerspells — speed, smoothness, and consistency of letter transitions — directly from
 video, instead of recognizing *what* they spelled.
 
+**Links:** [Project webpage](https://jasonkolodziej.github.io/cs-5243-901-project/) ·
+[Final slides](../ASL-Final-Presentation.pptx) ·
+[Analysis notebook](notebooks/01_pilot_modelling_and_fairness.ipynb) ·
+Presentation video (link added after the live presentation)
+
 **Research question:** can kinematic features from hand-landmark tracking (signing rate,
 inter-letter transition smoothness, pause patterns) predict human-perceived fingerspelling
 fluency?
@@ -386,7 +391,8 @@ scored).
    CIs are too wide — don't pre-commit human hours the statistics may not need.
 2. Boundary labels on the same clips → `boundary-sensitivity`.
 3. Hypothesis test: `clip-context` → `evaluate` — the pre-registered table,
-   run **once** on the final consensus (single-rater pilot already done; see
+   run **once** on the final ratings (done: ICC(2,k) = 0.20 < 0.6, so per-rater
+   results are reported and no consensus claim is made; see
    "Modelling and pre-registered analysis plan").
 4. Branch: boundaries the bottleneck → CTC aligner; else skip and say so in
    the paper. CIs too wide → next rating batch.

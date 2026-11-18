@@ -74,4 +74,4 @@ site:
   repo_url: https://github.com/jasonkolodziej/cs-5243-901-project
   notebook_url: https://github.com/jasonkolodziej/cs-5243-901-project/blob/main/asl-fluency/notebooks/01_pilot_modelling_and_fairness.ipynb
   slides_url: "https://github.com/jasonkolodziej/cs-5243-901-project/raw/refs/heads/main/ASL-Final-Presentation.pptx"
-  video_url: ""
+  video_url: ""  # TODO(team): add the recorded presentation link (YouTube / Canvas) after the live talk

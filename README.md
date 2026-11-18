@@ -5,6 +5,11 @@ Fingerspelling"** (Steele, Kolodziej, Fogeh). The system scores *how fluently* s
 fingerspells — speed, smoothness, and consistency of letter transitions — directly from
 video, instead of recognizing *what* they spelled.
 
+**Links:** [Project webpage](https://jasonkolodziej.github.io/cs-5243-901-project/) ·
+[Final slides](ASL-Final-Presentation.pptx) ·
+[Analysis notebook](asl-fluency/notebooks/01_pilot_modelling_and_fairness.ipynb) ·
+Presentation video (link added after the live presentation)
+
 **Research question:** can kinematic features from hand-landmark tracking (signing rate,
 inter-letter transition smoothness, pause patterns) predict human-perceived fingerspelling
 fluency?
@@ -14,8 +19,8 @@ correlates significantly with human fluency ratings, outperforming a naive basel
 only overall signing speed (letters per second).
 
 > **Canonical documentation:** [`asl-fluency/README.md`](asl-fluency/README.md) is the
-> up-to-date reference for setup, commands, the pre-registered analysis plan, and pilot
-> results. Sections below this one may lag behind it. The pilot analysis notebook is
+> up-to-date reference for setup, commands, the pre-registered analysis plan, and final
+> results. Sections below this one may lag behind it. The analysis notebook is
 > [`asl-fluency/notebooks/01_pilot_modelling_and_fairness.ipynb`](asl-fluency/notebooks/01_pilot_modelling_and_fairness.ipynb).
 
 ## Project status
@@ -25,7 +30,7 @@ _Last updated 2026-11-18. Ratings closed 2026-11-17 (all 3 raters complete); fin
 ### Done
 
 - [x] Pipeline end-to-end: `index` → `landmarks` → `features` → `rating-sheet` → `rate` →
-      `agreement` → `evaluate` → `train` / `score` (76 tests passing)
+      `agreement` → `evaluate` → `train` / `score` (86 tests passing)
 - [x] Landmarks + feature table for 7,236 ChicagoFSWild clips
 - [x] Boundary-sensitivity analysis on the full corpus (whole-clip features robust, ρ ≥ 0.998)
 - [x] Stratified 50-clip rating sheet (27 signers); all 3 raters rated all 50 clips
@@ -36,13 +41,14 @@ _Last updated 2026-11-18. Ratings closed 2026-11-17 (all 3 raters complete); fin
 - [x] Per-rater hypothesis test (pre-registered fallback): supported for `instructor_a` (Δρ = +0.34, p = .03),
       directional for `fluent_c` (+0.13, p = .22), not for `instructor_b` (−0.11); 3-rater mean exploratory only
 - [x] Scorer trained (`train`) and corpus scored (`score --from-features`); notebook and webpage updated
-- [x] Pilot notebook + pre-registered analysis plan
+- [x] Analysis notebook + pre-registered analysis plan
+- [x] GitHub Pages webpage live and auto-deployed from `main`
 
 ### Remaining
 
 | # | Task | Owner | Needs | Due |
 |---|---|---|---|---|
-| 1 | Open PR `feat/pilot-modelling` → `chore/rating-sheet` | Jason | — | 11-17 |
+| ~~1~~ | ✅ Open PR `feat/pilot-modelling` → `chore/rating-sheet` (merged to `main` via #2) | Jason | — | 11-17 |
 | ~~2~~ | ✅ Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | maya, divine | — | **11-17, 11:59 PM** |
 | 3 | Hand-label letter boundaries on the 50 rated clips (`label-boundaries`) | team | — | 11-20 |
 | 4 | Draft paper: intro, related work, methods, dataset, boundary sensitivity, pilot | team | — | 11-24 |
@@ -52,11 +58,14 @@ _Last updated 2026-11-18. Ratings closed 2026-11-17 (all 3 raters complete); fin
 | 8 | Fairness write-up (stratified metrics, tracker-quality gap, ITA caveats) | team | 7 | 11-27 |
 | 9 | Optional: rater calibration (shared 1/3/5 anchor clips) + rating batch 2 — low ICC is the binding constraint | team | 5 | 11-27 |
 | 10 | Final revisions, figures, limitations; submit | team | 7, 8 | **12-02** |
-| 11 | Enable GitHub Pages (Settings → Pages → Source: GitHub Actions); add slide / video links to `site:` in `configs/default.yaml` | Jason | — | 11-20 |
+| ~~11~~ | ✅ Enable GitHub Pages; slide link added to `site:` in `configs/default.yaml` | Jason | — | 11-18 |
+| 12 | Record the live presentation; upload / link on Canvas; set `site.video_url` in `configs/default.yaml` and the video link above | team | — | **12-02** |
+| 13 | Peer & self evaluation (each student, individually) | everyone | — | **12-02** |
 
 **Project webpage:** built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) from
-committed data on every push to `main` — committing the instructor ratings automatically updates
-the published numbers and switches the page from "single-rater pilot" to "consensus" framing.
+committed data on every push to `main` and live at
+<https://jasonkolodziej.github.io/cs-5243-901-project/>. Its framing is derived from the data: with
+all 3 raters in and ICC(2,k) = 0.20 < 0.6, it shows "ratings complete, low agreement" (no consensus claim).
 See [`asl-fluency/README.md`](asl-fluency/README.md#project-webpage-github-pages).
 
 Out of scope for the deadline (future work in the paper): CTC forced aligner (Roadmap Gap 1
@@ -75,7 +84,7 @@ gantt
     Modelling fix, fairness strata, notebook :done, d3, 2026-11-16, 1d
 
     section Ground truth
-    Open PR feat/pilot-modelling             :a1, 2026-11-16, 2d
+    Open PR feat/pilot-modelling             :done, a1, 2026-11-16, 2d
     Instructor ratings                       :done, r1, 2026-11-16, 2026-11-18
     Ratings cutoff (11-17 midnight)          :milestone, crit, m1, 2026-11-18, 0d
     Boundary labels (50 clips)               :b1, 2026-11-17, 2026-11-20
