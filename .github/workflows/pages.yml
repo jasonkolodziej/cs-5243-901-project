@@ -1,0 +1,67 @@
+name: Project webpage
+
+# Rebuilds and redeploys the GitHub Pages site whenever anything that feeds its
+# numbers changes on main — most importantly new ratings in ratings_intake.csv.
+# The page recomputes agreement, the ablation, the hypothesis test and the
+# fairness strata from committed data, and re-frames itself (pilot -> consensus).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "asl-fluency/data/ratings/**"
+      - "asl-fluency/data/processed/features.csv"
+      - "asl-fluency/data/processed/boundary_sensitivity.csv"
+      - "asl-fluency/src/**"
+      - "asl-fluency/configs/**"
+      - "asl-fluency/uv.lock"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build site from committed data
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: asl-fluency
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      - name: Test (never publish numbers from a broken pipeline)
+        run: uv run pytest -q
+
+      - name: Render site
+        run: uv run asl-fluency site --out "$GITHUB_WORKSPACE/_site"
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

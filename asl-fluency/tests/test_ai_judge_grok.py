@@ -164,8 +164,6 @@ class TestGrokBackend:
         assert saved["rating"] == 4
 
     def test_frames_sampled_in_temporal_order(self, tmp_path):
-        import cv2
-
         from asl_fluency.ai_judge import _sample_frames
 
         clip = _write_frames(tmp_path / "clip_b", n=40)
