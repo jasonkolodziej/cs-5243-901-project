@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 # Optional deep-learning stack for the kinematic + raw-video fused model (ablation arm).
 fused = ["torch>=2.3", "torchvision>=0.18"]
-dev = ["pytest>=8.0", "ruff>=0.5", "ipykernel>=6.29"]
+dev = ["pytest>=8.0", "ruff>=0.5", "ipykernel>=6.29", "nbconvert>=7.17.2"]
 ai = ["openai>1.0.0"]
 
 [project.scripts]
