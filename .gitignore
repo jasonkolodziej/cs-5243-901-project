@@ -149,3 +149,14 @@ vite.config.ts.timestamp-*
 **/*.pyo
 **/*.pyd
 **/data/raw/**/*.jpg
+**/data/interim/landmarks/*.npz
+**/data/interim/ai_sheets
+**/data/ratings/ratings_a*.csv
+**/data/processed/ablation_results*.csv
+**/data/processed/stratified_results*.csv
+.agents/
+# .github/
+FINAL_PRESENTATION_HANDOFF.md
+
+# GitHub Pages build output (asl-fluency site)
+_site/

@@ -97,7 +97,7 @@ def kinematic_features(
         feats[f"trans_{name}_std"] = stats["std"]
     feats["trans_jerk_max"] = _segment_stats(j, spans)["max"]
     # Log dimensionless jerk (smoothness index; lower = smoother).
-    if duration_s > 0 and np.nanmax(v) > 0:
+    if duration_s > 0 and np.isfinite(j).any() and np.nanmax(v) > 0:
         d_jerk = duration_s**5 / (np.nanmax(v) ** 2) * np.nanmean(j**2)
         feats["log_dimless_jerk"] = float(-np.log(abs(d_jerk) + 1e-12))
     else:
@@ -107,11 +107,20 @@ def kinematic_features(
     tips = seq.landmarks[:, FINGER_TIPS, :2].reshape(len(seq.frame_ok), -1)
     tips = smooth_positions(tips, smooth_window, smooth_polyorder, fps)
     tv, _, tj = derivatives(tips, fps)
-    feats["tip_vel_mean"] = float(np.nanmean(tv))
-    feats["tip_jerk_std"] = float(np.nanstd(tj))
+    feats["tip_vel_mean"] = (
+        float(np.nanmean(tv)) if np.isfinite(tv).any() else np.nan
+    )
+    feats["tip_jerk_std"] = (
+        float(np.nanstd(tj)) if np.isfinite(tj).any() else np.nan
+    )
 
     # Pauses: runs of frames where wrist speed is below the clip's low percentile.
-    thresh = np.nanpercentile(v[seq.frame_ok], pause_speed_percentile) if seq.frame_ok.any() else np.nan
+    v_ok = v[seq.frame_ok]
+    thresh = (
+        np.nanpercentile(v_ok, pause_speed_percentile)
+        if seq.frame_ok.any() and np.isfinite(v_ok).any()
+        else np.nan
+    )
     pauses = _pause_runs(v, thresh, min_pause_frames)
     feats["pause_count"] = float(len(pauses))
     feats["pause_total_s"] = float(sum(p[1] - p[0] for p in pauses) / fps)

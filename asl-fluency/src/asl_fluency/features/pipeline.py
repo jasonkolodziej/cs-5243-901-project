@@ -23,9 +23,28 @@ KINEMATIC_FEATURES = [
 ]
 QUALITY_COVARIATES = ["detection_rate"]  # kept out of the model, used for slicing
 
+# Full-corpus boundary-jitter analysis (boundary-sensitivity on 7,236 clips)
+# showed letter_dur_std_s / letter_dur_cv are artifacts of the aligner (rank
+# correlation vs. unperturbed ≈ 0.0 / 0.5 — an even split makes durations
+# near-identical by construction). The "kinematic_robust" set drops them so
+# the ablation can test whether the artifact features help or hurt.
+ALIGNER_ARTIFACT_FEATURES = ["letter_dur_std_s", "letter_dur_cv"]
+KINEMATIC_ROBUST_FEATURES = [
+    f for f in KINEMATIC_FEATURES if f not in ALIGNER_ARTIFACT_FEATURES
+]
+
+# Pre-registered primary set: one feature per construct named in the proposal's
+# RQ (signing rate, transition smoothness, pause patterns). Chosen a priori —
+# NOT by correlation with collected ratings — so the primary hypothesis test is
+# not tuned on the data it is evaluated on. Small enough (3 coefficients) to fit
+# honestly on ~50 rated clips, which the ~18-feature arms cannot (Section 7).
+CORE_FEATURES = ["letters_per_second", "log_dimless_jerk", "pause_total_s"]
+
 FEATURE_SETS = {
     "naive": NAIVE_FEATURES,                                  # baseline arm
+    "core": CORE_FEATURES,                                    # pre-registered primary arm
     "kinematic": NAIVE_FEATURES + KINEMATIC_FEATURES,         # proposal's main arm
+    "kinematic_robust": NAIVE_FEATURES + KINEMATIC_ROBUST_FEATURES,  # minus artifacts
     "full": NAIVE_FEATURES + KINEMATIC_FEATURES,              # + fused embeddings later
 }
 
@@ -50,7 +69,16 @@ def build_feature_table(
     transcripts: dict[str, str],
     **kw,
 ) -> pd.DataFrame:
-    """Build the full feature table from a directory of .npz landmark files."""
+    """Build the full feature table from a directory of .npz landmark files.
+
+    Rows whose kinematic features came out NaN (tracking too sparse to
+    smooth, even though the clip passed the segmentation gate) are dropped
+    and reported — sklearn estimators cannot fit NaNs, and such rows carry
+    no real signal.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
     rows = []
     for path in sorted(Path(landmark_dir).glob("*.npz")):
         seq = LandmarkSequence.load(path)
@@ -59,7 +87,17 @@ def build_feature_table(
         try:
             rows.append(compute_feature_row(seq, transcripts[seq.clip_id], **kw))
         except ValueError as exc:
-            import logging
-
-            logging.getLogger(__name__).warning("skip %s: %s", seq.clip_id, exc)
-    return pd.DataFrame(rows)
+            log.warning("skip %s: %s", seq.clip_id, exc)
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    feature_cols = NAIVE_FEATURES + KINEMATIC_FEATURES
+    bad = table[feature_cols].isna().any(axis=1)
+    if bad.any():
+        log.warning(
+            "drop %d clips with NaN features (tracking too sparse): %s",
+            int(bad.sum()),
+            ", ".join(table.loc[bad, "clip_id"].head(10)),
+        )
+        table = table[~bad].reset_index(drop=True)
+    return table

@@ -37,6 +37,10 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Metrics:
     y_true, y_pred = y_true[mask], y_pred[mask]
     if len(y_true) < 3:
         return Metrics(np.nan, np.nan, np.nan, len(y_true))
+    mae = float(np.mean(np.abs(y_true - y_pred)))
+    if np.ptp(y_true) == 0 or np.ptp(y_pred) == 0:
+        # Constant input (e.g. the mean baseline): correlation is undefined.
+        return Metrics(np.nan, np.nan, mae, len(y_true))
     return Metrics(
         spearman=float(stats.spearmanr(y_true, y_pred).statistic),
         pearson=float(stats.pearsonr(y_true, y_pred).statistic),
@@ -46,15 +50,24 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Metrics:
 
 
 def bootstrap_ci(
-    y_true: np.ndarray, y_pred: np.ndarray, iters: int = 1000, seed: int = 42
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    iters: int = 1000,
+    seed: int = 42,
+    groups: np.ndarray | pd.Series | None = None,
 ) -> dict[str, tuple[float, float]]:
-    """95% bootstrap CIs for each metric."""
+    """95% bootstrap CIs for each metric, resampling groups when provided."""
     rng = np.random.default_rng(seed)
     y_true, y_pred = np.asarray(y_true, float), np.asarray(y_pred, float)
+    groups = None if groups is None else np.asarray(groups)
+    mask = ~(np.isnan(y_true) | np.isnan(y_pred))
+    y_true, y_pred = y_true[mask], y_pred[mask]
+    if groups is not None:
+        groups = groups[mask]
     n = len(y_true)
     acc: dict[str, list[float]] = {"spearman": [], "pearson": [], "mae": []}
     for _ in range(iters):
-        idx = rng.integers(0, n, n)
+        idx = _bootstrap_indices(rng, n, groups)
         m = compute_metrics(y_true[idx], y_pred[idx])
         for k, v in acc.items():
             v.append(getattr(m, k))
@@ -62,6 +75,64 @@ def bootstrap_ci(
         k: (float(np.nanpercentile(v, 2.5)), float(np.nanpercentile(v, 97.5)))
         for k, v in acc.items()
     }
+
+
+def paired_bootstrap_delta(
+    y_true: np.ndarray,
+    pred_a: np.ndarray,
+    pred_b: np.ndarray,
+    iters: int = 1000,
+    seed: int = 42,
+    groups: np.ndarray | pd.Series | None = None,
+) -> dict[str, float]:
+    """Paired bootstrap of Spearman(a) - Spearman(b) on the same clips.
+
+    This is the hypothesis test from proposal Section 3 ("kinematics
+    outperform the naive speed baseline"): resampling groups jointly keeps
+    signer-level dependence and both arms' errors paired. Returns the observed
+    delta, its 95% CI, and a one-sided p-value P(delta <= 0).
+    """
+    rng = np.random.default_rng(seed)
+    y_true, pred_a, pred_b = (np.asarray(v, float) for v in (y_true, pred_a, pred_b))
+    groups = None if groups is None else np.asarray(groups)
+    mask = ~(np.isnan(y_true) | np.isnan(pred_a) | np.isnan(pred_b))
+    y_true, pred_a, pred_b = y_true[mask], pred_a[mask], pred_b[mask]
+    if groups is not None:
+        groups = groups[mask]
+    n = len(y_true)
+    observed = compute_metrics(y_true, pred_a).spearman - compute_metrics(y_true, pred_b).spearman
+    deltas = []
+    for _ in range(iters):
+        idx = _bootstrap_indices(rng, n, groups)
+        deltas.append(
+            compute_metrics(y_true[idx], pred_a[idx]).spearman
+            - compute_metrics(y_true[idx], pred_b[idx]).spearman
+        )
+    deltas = np.asarray(deltas)
+    deltas = deltas[~np.isnan(deltas)]
+    if not len(deltas):
+        return {"delta": float(observed), "ci_lo": np.nan, "ci_hi": np.nan, "p_one_sided": np.nan}
+    return {
+        "delta": float(observed),
+        "ci_lo": float(np.percentile(deltas, 2.5)),
+        "ci_hi": float(np.percentile(deltas, 97.5)),
+        "p_one_sided": float(np.mean(deltas <= 0)),
+    }
+
+
+def _bootstrap_indices(
+    rng: np.random.Generator,
+    n: int,
+    groups: np.ndarray | None,
+) -> np.ndarray:
+    if groups is None:
+        return rng.integers(0, n, n)
+    codes, _ = pd.factorize(groups, sort=False)
+    missing = codes < 0
+    codes[missing] = np.arange(codes.max() + 1, codes.max() + 1 + missing.sum())
+    members = [np.flatnonzero(codes == code) for code in np.unique(codes)]
+    sampled = rng.integers(0, len(members), len(members))
+    return np.concatenate([members[i] for i in sampled])
 
 
 def cross_validate(
