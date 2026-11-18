@@ -249,7 +249,7 @@ class TestAblation:
         assert counts[2] == counts[3] == counts[4]
 
     def test_run_ablation_passes_aligned_signer_ids_to_bootstraps(self, monkeypatch):
-        import asl_fluency.evaluation.ablation as ablation
+        from asl_fluency.evaluation import ablation
 
         ids = ["c0", "c1", "c2", "c3"]
         features = pd.DataFrame({
@@ -961,7 +961,7 @@ class TestClipContext:
     def test_context_streams_and_aligns_subsampled_frames(self, tmp_path, monkeypatch):
         import cv2
 
-        import asl_fluency.landmarks.context as context
+        from asl_fluency.landmarks import context
 
         clip = tmp_path / "clip"
         clip.mkdir()
@@ -1036,6 +1036,9 @@ class TestProjectSite:
         assert res["n_active_raters"] == n_raters
         assert res["hypothesis"] is not None
         assert (res["agreement"] is None) == (n_raters == 1)
+        assert len(res["per_rater"]) == (0 if n_raters == 1 else n_raters)
+        if expected != "consensus":  # pre-registered: no claim without agreement
+            assert res["hypothesis"]["supported"] is False
 
         index = render_site(res, tmp_path, {"title": "T", "tagline": "t", "course": "C",
                                             "authors": ["A"], "repo_url": "https://x"})
@@ -1043,5 +1046,8 @@ class TestProjectSite:
         banner = {"pilot": "single-rater pilot", "consensus": "consensus of 3 raters",
                   "low_agreement": "low agreement"}[expected]
         assert banner in page
+        if expected == "low_agreement":
+            assert "No consensus verdict" in page and "Results — per rater" in page
+            assert "<strong>Supported:" not in page
         assert "(coming soon)" in page  # empty links render disabled, not broken
         json.loads((tmp_path / "results.json").read_text())  # written with allow_nan=False

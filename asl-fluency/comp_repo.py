@@ -57,9 +57,9 @@ def git_commit(root: Path) -> str:
     try:
         return subprocess.run(
             ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, check=False,
         ).stdout.strip() or "unknown"
-    except Exception:
+    except (OSError, subprocess.SubprocessError):  # git missing or timed out
         return "unknown"
 
 

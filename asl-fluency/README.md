@@ -238,23 +238,48 @@ Plan fixed **before** the instructor ratings are seen (see
 | Fairness | marginal metrics + mean signed error per skin-tone / lighting stratum, primary arm |
 | ICC < 0.6 or ratings late | per-rater results (`evaluate --rater …`) + agreement as findings; no consensus claim |
 
-**Single-rater pilot (`fluent_c`, n = 50, 27 signers)** — directionally
-consistent with the hypothesis, not yet significant:
+### Results (all 3 raters, n = 50 clips, 27 signers)
+
+**Rater agreement fails the pre-registered threshold:** ICC(2,k) = **0.20** (< 0.6),
+Fleiss' κ = −0.05. Raters rank clips only moderately alike (pairwise Spearman
+0.35–0.40) and use the scale very differently (means 3.86 / 2.24 / 3.08). Per the
+plan, **no consensus claim is made**: the per-rater results and the agreement
+itself are the reported findings.
+
+**Per rater (reported result):** primary arm vs. speed-only baseline, each rater alone
+
+| rater | mean rating | speed-only ρ | **core_ridge_cv** ρ [95% CI] | Δρ (p) | core_ordinal ρ (Δρ p) |
+|---|---|---|---|---|---|
+| fluent_c | 3.86 | 0.06 | 0.19 [−0.12, 0.49] | +0.13 (p = .22) | 0.26 (p = .20) |
+| instructor_a (Maya) | 2.24 | 0.15 | **0.49 [0.23, 0.75]** | **+0.34 (p = .03)** | **0.57 (p = .01)** |
+| instructor_b | 3.08 | −0.26 | −0.37 [−0.65, 0.05] | −0.11 (p = .92) | −0.12 (p = .19) |
+
+The hypothesis is supported at α = .05 for 1 of 3 raters and directionally for
+2 of 3. Smoothness (`log_dimless_jerk`) is the most consistent single signal
+(ρ = −0.42 / −0.66 / −0.24 per rater); speed correlates *negatively* with rated
+fluency for two raters.
+
+**3-rater mean (exploratory only — ICC < 0.6):**
 
 | arm | Spearman [95% CI] | MAE | Δρ vs. naive (p) |
 |---|---|---|---|
-| mean_baseline | — | 0.663 | — |
-| naive_speed_only | 0.06 [−0.23, 0.36] | 0.647 | — |
-| **core_ridge_cv** (primary) | 0.19 [−0.11, 0.46] | 0.663 | +0.13 (p = .14) |
-| core_ordinal | 0.26 [−0.02, 0.50] | 0.661 | +0.20 (p = .11) |
-| kinematic_ridge (α = 1, legacy) | −0.00 [−0.29, 0.28] | 0.858 | −0.06 |
-| kinematic_gbm (legacy) | −0.12 [−0.37, 0.14] | 0.825 | −0.18 |
+| mean_baseline | — | 0.674 | — |
+| naive_speed_only | 0.08 [−0.23, 0.53] | 0.647 | — |
+| **core_ridge_cv** (primary) | 0.43 [0.20, 0.68] | 0.578 | +0.35 (p = .02) |
+| core_ordinal | 0.36 [0.14, 0.61] | 0.585 | +0.28 (p = .10) |
+| kinematic_robust_ridge_cv | 0.21 [−0.04, 0.56] | 0.628 | +0.13 (p = .25) |
+| kinematic_ridge (α = 1, legacy) | 0.11 [−0.14, 0.45] | 0.746 | +0.03 (p = .47) |
+| kinematic_gbm (legacy) | −0.07 [−0.35, 0.39] | 0.778 | −0.15 (p = .86) |
 
-Fairness pilot: detection rate ≥ 0.98 in every skin-tone / lighting stratum
-(no tracker-quality gap); skin-tone signed errors |bias| ≤ 0.15. Full analysis,
-diagnostics and a simulated 3-rater dress rehearsal are in
-[`notebooks/01_pilot_modelling_and_fairness.ipynb`](notebooks/01_pilot_modelling_and_fairness.ipynb)
-— re-run it top to bottom once the instructor ratings land:
+The consensus test would pass (p = .02), but a mean of raters who disagree is not
+a reliable ground truth, so it is **not** claimed. Models, features and the test
+were fixed before the instructor ratings were seen and were not changed after.
+
+Fairness: detection rate ≥ 0.98 in every skin-tone / lighting stratum
+(Kruskal–Wallis p = .18 / .99 — no tracker-quality gap); skin-tone signed errors
+|bias| ≤ 0.17. Full analysis, per-rater tables and diagnostics are in
+[`notebooks/01_pilot_modelling_and_fairness.ipynb`](notebooks/01_pilot_modelling_and_fairness.ipynb).
+To re-run it:
 
 ```bash
 uv sync --extra dev

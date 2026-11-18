@@ -27,6 +27,8 @@ import time
 import zipfile
 from pathlib import Path
 
+import cv2
+
 from asl_fluency.ai_judge import render_contact_sheet
 from asl_fluency.config import project_root
 
@@ -80,7 +82,6 @@ def main() -> int:
             skipped += 1
         else:
             try:
-                import cv2  # local import: only needed when rendering
                 # render_contact_sheet picks format from the extension; write
                 # PNG then re-encode as quality JPEG to keep the zip small
                 tmp_png = sheet.with_suffix(".png")
@@ -89,7 +90,7 @@ def main() -> int:
                 cv2.imwrite(str(sheet), img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
                 tmp_png.unlink()
                 rendered += 1
-            except Exception as e:  # unreadable clip: report, keep going
+            except (OSError, ValueError, cv2.error) as e:  # unreadable clip: report, keep going
                 missing.append(f"{clip_id} ({e})")
                 continue
         manifest.append({"clip_id": clip_id, "sheet": sheet.name})

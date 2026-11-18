@@ -26,6 +26,7 @@ import pandas as pd
 from .data.fluency_labels import consensus_scores, split_ai_raters
 from .evaluation.ablation import (
     BASELINE_ARM,
+    DEFAULT_ARMS,
     PRIMARY_ARM,
     marginal_stratified_metrics,
     run_ablation,
@@ -106,6 +107,7 @@ def compute_site_results(
         "hypothesis": None,
         "fairness": [],
         "boundary": [],
+        "per_rater": [],
     }
 
     n_groups = labeled["signer_id"].nunique() if len(labeled) else 0
@@ -121,11 +123,18 @@ def compute_site_results(
                 "arm": PRIMARY_ARM, "baseline": BASELINE_ARM,
                 "delta": primary["delta_spearman"], "ci": primary["delta_ci"],
                 "p": primary["p_vs_naive"],
-                "supported": bool(primary["p_vs_naive"] is not None
+                "significant": bool(primary["p_vs_naive"] is not None
+                                    and primary["p_vs_naive"] < ALPHA),
+                # Pre-registered: no consensus claim unless ICC(2,k) >= threshold.
+                "supported": bool(mode == "consensus" and primary["p_vs_naive"] is not None
                                   and primary["p_vs_naive"] < ALPHA),
             }
         if context is not None and len(context):
             results["fairness"] = _fairness(y, details[PRIMARY_ARM]["oof"], context, labeled)
+        if n_active >= 2:
+            results["per_rater"] = _per_rater(
+                rated, feats, n_splits=n_splits, bootstrap_iters=bootstrap_iters
+            )
 
     if boundary is not None and len(boundary):
         results["boundary"] = [
@@ -133,6 +142,32 @@ def compute_site_results(
             for r in boundary.sort_values("min_rho").to_dict("records")
         ]
     return results
+
+
+def _per_rater(rated, feats, *, n_splits, bootstrap_iters) -> list[dict]:
+    """Primary vs. baseline against each rater alone (the low-ICC fallback)."""
+    arms = [a for a in DEFAULT_ARMS if a["name"] in (BASELINE_ARM, PRIMARY_ARM)]
+    rows = []
+    for rater_id, g in rated.groupby("rater_id"):
+        y = consensus_scores(g)
+        lab = feats[feats["clip_id"].isin(y.index)].reset_index(drop=True)
+        n_groups = lab["signer_id"].nunique()
+        if len(lab) < 10 or n_groups < 2:
+            continue
+        summary, _ = run_ablation(lab, y, arms=arms, group_col="signer_id",
+                                  n_splits=min(n_splits, n_groups),
+                                  bootstrap_iters=bootstrap_iters)
+        by = {r["arm"]: _ablation_row(r) for r in summary.to_dict("records")}
+        rows.append({
+            "rater_id": rater_id,
+            "mean_rating": _num(y.mean()),
+            "baseline_spearman": by[BASELINE_ARM]["spearman"],
+            "primary_spearman": by[PRIMARY_ARM]["spearman"],
+            "primary_ci": by[PRIMARY_ARM]["spearman_ci"],
+            "delta": by[PRIMARY_ARM]["delta_spearman"],
+            "p": by[PRIMARY_ARM]["p_vs_naive"],
+        })
+    return rows
 
 
 def _fairness(y, oof, context, labeled) -> list[dict]:
@@ -282,7 +317,11 @@ def _html(r: dict, meta: dict, figs: dict) -> str:
         "consensus": f"<strong>Final — consensus of {r['n_active_raters']} raters</strong>, "
                      f"ICC(2,k) = {_f(icc)} (≥ {r['icc_threshold']}).",
     }[mode]
-    scope = "single-rater pilot" if mode == "pilot" else f"consensus of {r['n_active_raters']} raters"
+    scope = {
+        "pilot": "single-rater pilot",
+        "low_agreement": f"mean of {r['n_active_raters']} raters, low agreement — exploratory",
+        "consensus": f"consensus of {r['n_active_raters']} raters",
+    }[mode]
 
     h = r["hypothesis"]
     if h is None:
@@ -290,7 +329,13 @@ def _html(r: dict, meta: dict, figs: dict) -> str:
     else:
         stats_txt = (f"Δρ = {_f(h['delta'], signed=True)}, 95% CI [{_f(h['ci'][0], signed=True)}, "
                      f"{_f(h['ci'][1], signed=True)}], one-sided p = {_p(h['p'])}")
-        if h["supported"]:
+        if mode == "low_agreement":
+            sig = "significant" if h.get("significant") else "not significant"
+            verdict = ("<strong>No consensus verdict (pre-registered):</strong> raters disagree "
+                       f"(ICC(2,k) = {_f(icc)} &lt; {r['icc_threshold']}), so the consensus test "
+                       f"is reported as exploratory only — {stats_txt}, {sig} at α = .05. "
+                       "See per-rater results below.")
+        elif h["supported"]:
             verdict = ("<strong>Supported:</strong> the kinematic model outperforms the speed-only "
                        f"baseline ({stats_txt}).")
         elif h["delta"] is not None and h["delta"] > 0:
@@ -329,6 +374,20 @@ def _html(r: dict, meta: dict, figs: dict) -> str:
         f"<td class=num>{_f(x['mean_rating'])}</td><td class=num>{_f(x['bias'], signed=True)}</td></tr>"
         for x in r["fairness"]
     )
+    per_rater_rows = "".join(
+        f"<tr><td>{e(x['rater_id'])}</td><td class=num>{_f(x['mean_rating'])}</td>"
+        f"<td class=num>{_f(x['baseline_spearman'])}</td>"
+        f"<td class=num>{_f(x['primary_spearman'])} [{_f(x['primary_ci'][0])}, "
+        f"{_f(x['primary_ci'][1])}]</td>"
+        f"<td class=num>{_f(x['delta'], signed=True)} (p = {_p(x['p'])})</td></tr>"
+        for x in r["per_rater"]
+    )
+    per_rater_html = "" if not per_rater_rows else f"""
+<h2>Results — per rater</h2>
+<table><tr><th>Rater</th><th>Mean rating</th><th>Speed-only ρ</th>
+<th>Primary model ρ [95% CI]</th><th>Δρ vs. speed-only (p)</th></tr>{per_rater_rows}</table>
+<p class=muted>Primary model (ridge-CV, core features) and speed-only baseline evaluated against
+each rater alone, signer-disjoint CV. Pre-registered fallback when raters disagree.</p>"""
     bnd_rows = "".join(
         f"<tr><td><code>{e(x['feature'])}</code></td><td class=num>{_f(x['min_rho'])}</td></tr>"
         for x in r["boundary"]
@@ -402,6 +461,8 @@ browser UI. Mean rating {_f(r['rating_mean'])} (SD {_f(r['rating_sd'])}).</p>
 <p class=muted>Out-of-fold predictions, signer-disjoint CV. Δρ: paired bootstrap of
 Spearman(model) − Spearman(speed-only) on the same clips, one-sided. MAE in red is worse than
 predicting the mean. The primary arm was fixed before ratings were collected.</p>
+
+{per_rater_html}
 
 <h2>Fairness (skin tone &amp; lighting)</h2>
 <table><tr><th>Stratum</th><th>Clips</th><th>Hand detection</th><th>Mean rating</th>

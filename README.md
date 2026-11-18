@@ -20,7 +20,7 @@ only overall signing speed (letters per second).
 
 ## Project status
 
-_Last updated 2026-11-16. Ratings cutoff **2026-11-17 at 11:59 PM**, final deadline **2026-12-02**._
+_Last updated 2026-11-18. Ratings closed 2026-11-17 (all 3 raters complete); final deadline **2026-12-02**._
 
 ### Done
 
@@ -28,11 +28,14 @@ _Last updated 2026-11-16. Ratings cutoff **2026-11-17 at 11:59 PM**, final deadl
       `agreement` → `evaluate` → `train` / `score` (76 tests passing)
 - [x] Landmarks + feature table for 7,236 ChicagoFSWild clips
 - [x] Boundary-sensitivity analysis on the full corpus (whole-clip features robust, ρ ≥ 0.998)
-- [x] Stratified 50-clip rating sheet (27 signers); `fluent_c` rated all 50
+- [x] Stratified 50-clip rating sheet (27 signers); all 3 raters rated all 50 clips
 - [x] Modelling fix: pre-registered 3-feature `core_ridge_cv` primary arm, ordinal arm,
       mean-baseline floor, paired-bootstrap hypothesis test
 - [x] Objective fairness strata (`clip-context`: ITA skin-tone proxy + lighting) for rated clips
-- [x] Single-rater pilot: primary arm ρ = 0.19 vs. naive 0.06 (Δρ = +0.13, p = .14, n = 50)
+- [x] Rater agreement: ICC(2,k) = 0.20, Fleiss' κ = −0.05 — **below the pre-registered 0.6**, so no consensus claim
+- [x] Per-rater hypothesis test (pre-registered fallback): supported for `instructor_a` (Δρ = +0.34, p = .03),
+      directional for `fluent_c` (+0.13, p = .22), not for `instructor_b` (−0.11); 3-rater mean exploratory only
+- [x] Scorer trained (`train`) and corpus scored (`score --from-features`); notebook and webpage updated
 - [x] Pilot notebook + pre-registered analysis plan
 
 ### Remaining
@@ -40,14 +43,14 @@ _Last updated 2026-11-16. Ratings cutoff **2026-11-17 at 11:59 PM**, final deadl
 | # | Task | Owner | Needs | Due |
 |---|---|---|---|---|
 | 1 | Open PR `feat/pilot-modelling` → `chore/rating-sheet` | Jason | — | 11-17 |
-| 2 | Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | maya, divine | — | **11-17, 11:59 PM** |
+| ~~2~~ | ✅ Instructor ratings (`instructor_a`, `instructor_b`, ~10 min each via `asl-fluency rate`) | maya, divine | — | **11-17, 11:59 PM** |
 | 3 | Hand-label letter boundaries on the 50 rated clips (`label-boundaries`) | team | — | 11-20 |
 | 4 | Draft paper: intro, related work, methods, dataset, boundary sensitivity, pilot | team | — | 11-24 |
-| 5 | `agreement` (ICC ≥ 0.6?) then `evaluate` **once** on the final consensus | Jason | 2 | 11-18 |
-| 6 | Fallback if #2 misses the cutoff: report single-rater pilot (`evaluate --rater fluent_c`) | Jason | — | 11-18 |
-| 7 | `train` + `score --from-features`; re-run the pilot notebook; fill result tables | Jason | 5 or 6 | 11-19 |
+| ~~5~~ | ✅ `agreement` (ICC = 0.20 < 0.6) then `evaluate` once; per-rater results reported | Jason | 2 | 11-18 |
+| ~~6~~ | ~~Fallback if #2 misses the cutoff~~ — not needed, all ratings arrived | Jason | — | 11-18 |
+| ~~7~~ | ✅ `train` + `score --from-features`; re-run the notebook; fill result tables | Jason | 5 or 6 | 11-19 |
 | 8 | Fairness write-up (stratified metrics, tracker-quality gap, ITA caveats) | team | 7 | 11-27 |
-| 9 | Optional: rating batch 2 (`rating-sheet --batch 2`) — only if CIs too wide **and** time allows | team | 5 | 11-27 |
+| 9 | Optional: rater calibration (shared 1/3/5 anchor clips) + rating batch 2 — low ICC is the binding constraint | team | 5 | 11-27 |
 | 10 | Final revisions, figures, limitations; submit | team | 7, 8 | **12-02** |
 | 11 | Enable GitHub Pages (Settings → Pages → Source: GitHub Actions); add slide / video links to `site:` in `configs/default.yaml` | Jason | — | 11-20 |
 
@@ -73,13 +76,13 @@ gantt
 
     section Ground truth
     Open PR feat/pilot-modelling             :a1, 2026-11-16, 2d
-    Instructor ratings                       :crit, active, r1, 2026-11-16, 2026-11-18
+    Instructor ratings                       :done, r1, 2026-11-16, 2026-11-18
     Ratings cutoff (11-17 midnight)          :milestone, crit, m1, 2026-11-18, 0d
     Boundary labels (50 clips)               :b1, 2026-11-17, 2026-11-20
 
     section Analysis
-    Agreement + evaluate once (or fallback)  :crit, e1, after m1, 1d
-    Train, score, re-run notebook            :e2, after e1, 1d
+    Agreement + evaluate once (ICC 0.20)     :done, e1, after m1, 1d
+    Train, score, re-run notebook            :done, e2, after e1, 1d
     Optional rating batch 2                  :opt, after e1, 3d
 
     section Paper
