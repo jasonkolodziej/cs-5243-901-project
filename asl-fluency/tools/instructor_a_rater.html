@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fingerspelling Fluency Rater — instructor_a</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --panel:#ffffff; --ink:#1d1c1a; --muted:#6b6862; --line:#e3e0d9;
+    --accent:#2f5d50; --accent-ink:#ffffff; --done:#2f5d50; --warn:#a4532b;
+    --s1:#b5462f; --s2:#c97a35; --s3:#b39a2f; --s4:#6b9a52; --s5:#2f7a5d;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#161614; --panel:#1f1f1c; --ink:#ecebe7; --muted:#9c9890; --line:#34332f; --accent:#7fbfa8; --accent-ink:#10201b; --done:#7fbfa8; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{padding:18px 24px 8px;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:baseline;justify-content:space-between}
+  h1{font-size:19px;margin:0;font-weight:650;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;padding:8px 24px 28px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+  button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+  button:hover{border-color:var(--muted)}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  button:disabled{opacity:.45;cursor:default}
+  input[type=text],select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+  #drop{border:2px dashed var(--line);border-radius:12px;padding:22px;text-align:center;color:var(--muted)}
+  #drop.over{border-color:var(--accent);color:var(--ink)}
+  #drop label.btn{display:inline-block;margin-top:8px;background:var(--accent);color:var(--accent-ink);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600}
+  #drop input{display:none}
+  .stage{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+  .stage img,.stage video{max-width:100%;max-height:100%;object-fit:contain}
+  .stage .empty{color:#bbb;padding:20px;text-align:center}
+  .meta{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 14px}
+  .scale{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .scale button{padding:14px 4px 10px;border-radius:10px;font-size:22px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:2px}
+  .scale button small{font-size:11px;font-weight:500;color:var(--muted)}
+  .scale button.sel{color:#fff;border-color:transparent}
+  .scale button.sel small{color:#fff}
+  .scale button[data-v="1"].sel{background:var(--s1)} .scale button[data-v="2"].sel{background:var(--s2)}
+  .scale button[data-v="3"].sel{background:var(--s3)} .scale button[data-v="4"].sel{background:var(--s4)}
+  .scale button[data-v="5"].sel{background:var(--s5)}
+  .keys{font-size:12px;color:var(--muted);margin-top:10px}
+  kbd{font:11px ui-monospace,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px}
+  .progress{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:4px 0 10px}
+  .progress div{height:100%;background:var(--done);width:0}
+  .grid{display:grid;grid-template-columns:repeat(10,1fr);gap:4px}
+  .chip{aspect-ratio:1;border-radius:5px;border:1px solid var(--line);font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);background:var(--panel);padding:0}
+  .chip.missing{opacity:.35}
+  .chip.rated{background:var(--done);color:var(--accent-ink);border-color:var(--done);font-weight:700}
+  .chip.cur{outline:2px solid var(--ink);outline-offset:1px}
+  textarea{width:100%;height:120px;font:12px/1.4 ui-monospace,monospace;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--bg);color:var(--ink);resize:vertical}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  .note{font-size:12px;color:var(--muted)}
+  .warn{color:var(--warn)}
+  .stack>*+*{margin-top:14px}
+  #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Fingerspelling Fluency Rater</h1>
+    <div class="sub">CS 5243 Group 3 · 50 clips from <code>rating_batches.csv</code> (batch 1) · rate 1–5</div>
+  </div>
+  <div class="row" style="margin:0">
+    <label class="sub" for="rater">Rater ID</label>
+    <input type="text" id="rater" value="instructor_a" size="14">
+  </div>
+</header>
+
+<main>
+  <section class="stack">
+    <div class="card" id="loadCard">
+      <h2>1 · Load the clips</h2>
+      <div id="drop">
+        Choose the folder that has the unzipped clip folders (e.g. <code>data/raw/aslized/</code>), or drag it here.<br>
+        Each clip should be a folder named like <code>austin_andrews_0666</code> with JPEG frames inside. An <code>.mp4</code> named after the clip works too.<br>
+        <label class="btn">Choose folder<input type="file" id="dirInput" webkitdirectory directory multiple></label>
+        &nbsp;<label class="btn" style="background:transparent;color:var(--accent);border:1px solid var(--accent)">Choose files<input type="file" id="fileInput" multiple accept="image/*,video/*"></label>
+      </div>
+      <div class="note" id="loadStatus" style="margin-top:8px">No clips loaded yet. Your saved ratings stay in this browser, so you can reload clips at any time.</div>
+    </div>
+
+    <div class="card">
+      <h2>2 · Watch and rate</h2>
+      <div class="stage" id="stage"><div class="empty">Load the clip folder to start.</div></div>
+      <div class="meta">
+        <span>Clip <b id="pos">–</b> of 50</span>
+        <span><b id="clipId">–</b></span>
+        <span id="frameInfo"></span>
+      </div>
+      <div class="controls">
+        <button id="prevBtn">◀ Prev</button>
+        <button id="replayBtn">↻ Replay</button>
+        <button id="nextBtn">Next ▶</button>
+        <label class="sub">Speed
+          <select id="speed">
+            <option value="1">1× (30 fps)</option>
+            <option value="0.5">0.5×</option>
+            <option value="0.25">0.25×</option>
+          </select>
+        </label>
+        <label class="sub"><input type="checkbox" id="loop" checked> Loop</label>
+        <label class="sub"><input type="checkbox" id="autoAdv" checked> Auto-advance</label>
+      </div>
+      <div class="scale" id="scale">
+        <button data-v="1">1<small>not fluent</small></button>
+        <button data-v="2">2<small></small></button>
+        <button data-v="3">3<small>moderate</small></button>
+        <button data-v="4">4<small></small></button>
+        <button data-v="5">5<small>very fluent</small></button>
+      </div>
+      <div class="row" style="justify-content:space-between">
+        <button id="clearBtn">Clear this rating</button>
+        <span class="note">Rate overall fluency: speed, smoothness, and how even the transitions between letters are. Ignore whether the word is easy to read.</span>
+      </div>
+      <div class="keys"><kbd>1</kbd>–<kbd>5</kbd> rate · <kbd>←</kbd>/<kbd>→</kbd> prev/next · <kbd>Space</kbd> replay · <kbd>0</kbd> clear</div>
+    </div>
+  </section>
+
+  <aside class="stack">
+    <div class="card">
+      <h2>Progress</h2>
+      <div class="sub"><b id="nRated">0</b> of 50 rated</div>
+      <div class="progress"><div id="bar"></div></div>
+      <div class="grid" id="grid"></div>
+      <div class="note" style="margin-top:8px">Clips are shown in a fixed shuffled order, not the batch order. The batch file is sorted by stratum, so rating in that order would bias your scores. Click a square to jump to that clip. Faded squares mean the clip hasn't been loaded.</div>
+    </div>
+
+    <div class="card">
+      <h2>Save to ratings_intake.csv</h2>
+      <div class="note">Connect the repo's <code>asl-fluency/data/ratings/ratings_intake.csv</code>. Every click then writes straight into that file, like <code>asl-fluency rate</code>. Other raters' scores already in the file are kept. Then commit the file.</div>
+      <div class="row"><button class="primary" id="connectBtn">Connect ratings_intake.csv</button><button id="allowBtn" style="display:none">Allow saving to the file</button></div>
+      <div class="note" id="fileStatus">Not connected. Ratings are only saved in this browser until you connect the file or use Copy CSV.</div>
+    </div>
+
+    <div class="card">
+      <h2>3 · Export</h2>
+      <div class="row">
+        <select id="exportMode">
+          <option value="full">Full ratings_intake.csv (merged)</option>
+          <option value="mine">Only my rows</option>
+        </select>
+      </div>
+      <textarea id="out" readonly></textarea>
+      <div class="row">
+        <button class="primary" id="copyBtn">Copy CSV</button>
+        <button id="dlBtn">Download</button>
+      </div>
+      <div class="note">The merged version is the full <code>ratings_intake.csv</code> from the <code>chore/rating-sheet</code> branch, with the existing fluent_c scores kept and your column filled in. You can replace the file in the repo with it, or paste "only my rows" in the group chat. If Download does nothing here, use Copy, or open the downloaded copy of this page on your computer.</div>
+    </div>
+
+    <div class="card">
+      <h2>Restore / import</h2>
+      <div class="note">Paste a ratings CSV (<code>clip_id,rater_id,rating</code>) to load ratings for the current rater ID.</div>
+      <textarea id="importBox" style="height:70px" placeholder="clip_id,rater_id,rating&#10;austin_andrews_0666,instructor_a,4"></textarea>
+      <div class="row"><button id="importBtn">Import</button><button id="resetBtn">Reset all my ratings</button></div>
+    </div>
+  </aside>
+</main>
+<div id="toast"></div>
+
+<script>
+// ---- Data: batch 1 clips + existing intake ratings (chore/rating-sheet branch) ----
+const BATCH = `austin_andrews_0666,austin_andrews_0714,carol_padden_2044,david_o._reynolds_5799,deafaynrand_4394,deafaynrand_6542,deafvideotv_7282,marlon_kuntze_2745,sddsimple_1569,willearl2_1473,alex_abenchuchan_5318,alexandria_wailes_1891,austin_andrews_0815,austin_andrews_0817,deafaynrand_6556,elsie_stecker_0067,geoalpha_4566,melvin_patterson_2337,morningstar_6258,tia_albert_3831,alex_abenchuchan_3352,alex_abenchuchan_3394,alex_abenchuchan_3973,alex_abenchuchan_4385,elsie_stecker_0089,frekky_1331,gmmotorcross55_6340,picard90_7414,ryan_commerson_0382,suzanne_stecker_0244,alex_abenchuchan_5549,alexandria_wailes_1879,carol_padden_2005,deafaynrand_4487,kathyfans_3470,marlee_matlin_6860,marlon_kuntze_2644,picard90_7402,tar2006_1467,willearl2_0835,aidan_mack_3183,alex_abenchuchan_5471,carol_padden_2169,christine_sun_kim_5979,deafvideotv_5015,elsie_stecker_0021,howard_rosenblum_5560,marlon_kuntze_2417,tawny_holmes_6188,tia_albert_3855`.split(',');
+const FLUENT_C = [4,5,5,4,5,5,4,3,4,4,4,4,4,4,5,4,5,4,2,4,5,4,5,5,3,3,3,3,4,4,4,4,3,4,4,4,3,2,3,3,2,5,4,3,4,4,3,3,4,5];
+const RATERS = ['instructor_a','instructor_b','fluent_c'];
+const existing = {}; // existing[clip][rater] = value
+BATCH.forEach((c,i)=>{ existing[c] = {fluent_c:String(FLUENT_C[i])}; });
+
+// Fixed shuffled presentation order (seeded so it's the same every session)
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd = mulberry32(5243);
+const ORDER = BATCH.slice();
+for(let i=ORDER.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[ORDER[i],ORDER[j]]=[ORDER[j],ORDER[i]];}
+
+// ---- State ----
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+let rater = store.get('fsr_rater') || 'instructor_a';
+$('rater').value = rater;
+let ratings = store.get('fsr_ratings_'+rater) || {};  // clip -> 1..5
+let idx = store.get('fsr_idx') || 0;
+const media = {}; // clip -> {type:'frames', urls:[...]} | {type:'video', url}
+let timer = null, frame = 0;
+
+function save(){ store.set('fsr_ratings_'+rater, ratings); store.set('fsr_idx', idx); store.set('fsr_rater', rater); writeFile(); }
+
+// ---- Direct write to ratings_intake.csv (File System Access API, Chrome/Edge) ----
+let fileHandle = null;
+let fileRows = null; // [[clip, rater, rating], ...] in the file's original order
+function parseCsv(text){
+  const rows=[];
+  text.split(/\r?\n/).forEach((line,i)=>{
+    if(!line.trim()) return;
+    const p=line.split(',').map(s=>s.trim());
+    if(i===0 && p[0]==='clip_id') return;
+    rows.push([p[0], p[1], p[2]||'']);
+  });
+  return rows;
+}
+function fileCsv(){
+  // keep every existing row (all raters, all clips) in order; overwrite only this rater's cells
+  const seen=new Set();
+  const out=fileRows.map(([c,r,v])=>{
+    if(r===rater && CLIPSET.has(c)){ seen.add(c); return [c,r, ratings[c]!=null ? String(ratings[c]) : '']; }
+    return [c,r,v];
+  });
+  BATCH.forEach(c=>{ if(!seen.has(c) && ratings[c]!=null) out.push([c,rater,String(ratings[c])]); });
+  return 'clip_id,rater_id,rating\n'+out.map(r=>r.join(',')).join('\n')+'\n';
+}
+let writing=Promise.resolve();
+let canWrite=false;
+async function checkWrite(){
+  try{ canWrite = (await fileHandle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ canWrite=false; }
+  $('allowBtn').style.display = canWrite ? 'none' : '';
+  if(!canWrite) $('fileStatus').innerHTML=`Opened <b>${fileHandle.name}</b>. One more step: click <b>Allow saving to the file</b>, then choose <b>Save changes</b> or <b>Allow</b> in Chrome's prompt.`;
+  return canWrite;
+}
+$('allowBtn').onclick=async()=>{
+  if(!fileHandle) return;
+  try{
+    const p = await fileHandle.requestPermission({mode:'readwrite'});
+    if(p!=='granted'){ $('fileStatus').innerHTML='<span class="warn">Chrome didn\'t allow saving.</span> Click the button again and choose Allow.'; return; }
+  }catch(e){
+    $('fileStatus').innerHTML=`<span class="warn">Chrome blocked the request (${e.name}).</span> Try clicking the button again.`; return;
+  }
+  await checkWrite();
+  if(canWrite){ writeFile(); toast('Saving to the file is on'); }
+};
+function writeFile(){
+  if(!fileHandle || !fileRows || !canWrite) return;
+  const text=fileCsv();
+  writing = writing.then(async()=>{
+    try{
+      const w=await fileHandle.createWritable(); await w.write(text); await w.close();
+      const n=BATCH.filter(c=>ratings[c]).length;
+      $('fileStatus').innerHTML=`Connected to <b>${fileHandle.name}</b>. Saved ${n} of 50 ${rater} ratings at ${new Date().toLocaleTimeString()}.`;
+    }catch(e){
+      canWrite=false; $('allowBtn').style.display='';
+      $('fileStatus').innerHTML=`<span class="warn">Couldn't save to the file (${e.name}).</span> Click <b>Allow saving to the file</b>, or use Copy CSV. Your ratings are still kept in this browser.`;
+    }
+  });
+}
+$('connectBtn').onclick=async()=>{
+  if(!window.showOpenFilePicker){
+    $('fileStatus').innerHTML='<span class="warn">This browser or view can\'t write files directly.</span> Open the page from the repo in Chrome, or use Copy CSV.';
+    return;
+  }
+  try{
+    const [h]=await window.showOpenFilePicker({types:[{description:'CSV',accept:{'text/csv':['.csv']}}]});
+    const text=await (await h.getFile()).text();
+    const rows=parseCsv(text);
+    if(!rows.some(r=>CLIPSET.has(r[0]))){ $('fileStatus').innerHTML='<span class="warn">That file doesn\'t contain the batch clips.</span> Pick asl-fluency/data/ratings/ratings_intake.csv.'; return; }
+    fileHandle=h; fileRows=rows;
+    // pull other raters' current scores from the file so exports stay in sync
+    rows.forEach(([c,r,v])=>{ if(CLIPSET.has(c) && r!==rater){ existing[c][r]=v; } });
+    // ratings already in the file for this rater fill any gaps in this browser
+    let pulled=0;
+    rows.forEach(([c,r,v])=>{ if(CLIPSET.has(c) && r===rater && /^[1-5]$/.test(v) && ratings[c]==null){ ratings[c]=+v; pulled++; } });
+    await checkWrite();
+    save(); show();
+    toast(pulled ? `Opened. Loaded ${pulled} saved ratings from the file.` : 'File opened');
+  }catch(e){
+    if(e.name!=='AbortError') $('fileStatus').innerHTML=`<span class="warn">Couldn't open the file (${e.name}).</span>`;
+  }
+};
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),1600); }
+
+// ---- Loading ----
+const CLIPSET = new Set(BATCH);
+function ingest(files){
+  const frames = {}; let videos = 0;
+  for(const f of files){
+    const path = (f.webkitRelativePath || f._path || f.name).replace(/\\/g,'/');
+    const parts = path.split('/');
+    const name = parts[parts.length-1];
+    const base = name.replace(/\.[^.]+$/,'');
+    if(/^video\//.test(f.type) || /\.(mp4|webm|mov|m4v)$/i.test(name)){
+      if(CLIPSET.has(base)){ media[base] = {type:'video', url:URL.createObjectURL(f)}; videos++; }
+      continue;
+    }
+    if(!(/^image\//.test(f.type) || /\.(jpe?g|png)$/i.test(name))) continue;
+    // a clip folder is any path segment equal to a clip id
+    let clip = null;
+    for(let i=parts.length-2;i>=0;i--){ if(CLIPSET.has(parts[i])){ clip=parts[i]; break; } }
+    if(!clip) continue;
+    (frames[clip] ||= []).push({name:path, f});
+  }
+  for(const [clip, list] of Object.entries(frames)){
+    list.sort((a,b)=>a.name.localeCompare(b.name, undefined, {numeric:true}));
+    if(media[clip] && media[clip].type==='frames') media[clip].urls.forEach(u=>URL.revokeObjectURL(u));
+    media[clip] = {type:'frames', urls:list.map(x=>URL.createObjectURL(x.f))};
+  }
+  const found = BATCH.filter(c=>media[c]).length;
+  const missing = BATCH.filter(c=>!media[c]);
+  $('loadStatus').innerHTML = found
+    ? `Loaded <b>${found}</b> of 50 clips.` + (missing.length ? ` <span class="warn">Not found: ${missing.length}</span> (${missing.slice(0,6).join(', ')}${missing.length>6?', …':''}).` : ' All clips found.')
+    : `<span class="warn">None of the 50 clips were found in what you selected.</span> Pick the folder that has the clip folders inside it, named like <code>austin_andrews_0666</code>.`;
+  renderGrid(); show();
+}
+$('dirInput').addEventListener('change', e=>ingest(e.target.files));
+$('fileInput').addEventListener('change', e=>ingest(e.target.files));
+
+// drag & drop (folders via webkitGetAsEntry)
+const drop = $('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop', async e=>{
+  const items=[...e.dataTransfer.items].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  const out=[];
+  async function walk(entry, prefix){
+    if(entry.isFile){ await new Promise(r=>entry.file(f=>{f._path=prefix+entry.name; out.push(f); r();}, r)); }
+    else if(entry.isDirectory){
+      const reader=entry.createReader(); let batch;
+      do{ batch=await new Promise(r=>reader.readEntries(r,()=>r([]))); for(const ch of batch) await walk(ch, prefix+entry.name+'/'); }while(batch.length);
+    }
+  }
+  $('loadStatus').textContent='Reading files…';
+  for(const it of items) await walk(it,'');
+  ingest(out);
+});
+
+// ---- Player ----
+function stop(){ if(timer){clearInterval(timer); timer=null;} }
+function show(){
+  stop();
+  idx = Math.max(0, Math.min(ORDER.length-1, idx));
+  const clip = ORDER[idx];
+  $('pos').textContent = idx+1; $('clipId').textContent = clip;
+  const st = $('stage'); st.innerHTML='';
+  const m = media[clip];
+  if(!m){
+    st.innerHTML = `<div class="empty">This clip isn't loaded.<br><small>${clip}</small></div>`;
+    $('frameInfo').textContent='';
+  } else if(m.type==='video'){
+    const v=document.createElement('video'); v.src=m.url; v.muted=true; v.playsInline=true; v.autoplay=true; v.loop=$('loop').checked;
+    v.playbackRate = +$('speed').value; st.appendChild(v); $('frameInfo').textContent='video';
+    v.play().catch(()=>{});
+  } else {
+    const img=document.createElement('img'); st.appendChild(img);
+    // preload
+    m.urls.forEach(u=>{const p=new Image(); p.src=u;});
+    frame=0; img.src=m.urls[0];
+    const fps = 30 * +$('speed').value;
+    $('frameInfo').textContent = `${m.urls.length} frames · ${(m.urls.length/30).toFixed(2)} s at 30 fps`;
+    timer=setInterval(()=>{
+      frame++;
+      if(frame>=m.urls.length){
+        if($('loop').checked){ frame = -Math.round(fps*0.6); return; } // short pause between loops
+        stop(); return;
+      }
+      if(frame>=0) img.src=m.urls[frame];
+    }, 1000/fps);
+  }
+  document.querySelectorAll('#scale button').forEach(b=>b.classList.toggle('sel', +b.dataset.v===ratings[clip]));
+  renderGrid(); renderOut(); save();
+}
+function rate(v){
+  const clip=ORDER[idx];
+  if(v){ ratings[clip]=v; } else { delete ratings[clip]; }
+  save();
+  document.querySelectorAll('#scale button').forEach(b=>b.classList.toggle('sel', +b.dataset.v===ratings[clip]));
+  renderGrid(); renderOut();
+  if(v && $('autoAdv').checked){
+    // jump to next unrated clip, if any
+    let n = -1;
+    for(let k=1;k<=ORDER.length;k++){ const j=(idx+k)%ORDER.length; if(!ratings[ORDER[j]]){ n=j; break; } }
+    if(n>=0){ setTimeout(()=>{ idx=n; show(); }, 250); }
+    else { toast('All 50 rated. Export below.'); }
+  }
+}
+$('scale').addEventListener('click', e=>{ const b=e.target.closest('button'); if(b) rate(+b.dataset.v); });
+$('prevBtn').onclick=()=>{idx--; show();};
+$('nextBtn').onclick=()=>{idx++; show();};
+$('replayBtn').onclick=show;
+$('clearBtn').onclick=()=>rate(0);
+$('speed').onchange=show; $('loop').onchange=show;
+document.addEventListener('keydown', e=>{
+  if(e.target.matches('input[type=text],textarea,select')) return;
+  if(/^[1-5]$/.test(e.key)){ rate(+e.key); e.preventDefault(); }
+  else if(e.key==='0'){ rate(0); }
+  else if(e.key==='ArrowRight'){ idx++; show(); }
+  else if(e.key==='ArrowLeft'){ idx--; show(); }
+  else if(e.key===' '){ show(); e.preventDefault(); }
+});
+
+// ---- Progress grid ----
+function renderGrid(){
+  const g=$('grid'); g.innerHTML='';
+  ORDER.forEach((c,i)=>{
+    const b=document.createElement('button');
+    b.className='chip'+(ratings[c]?' rated':'')+(i===idx?' cur':'')+(media[c]?'':' missing');
+    b.textContent = ratings[c] || (i+1);
+    b.title = `${i+1}. ${c}${ratings[c]?' — '+ratings[c]:''}`;
+    b.onclick=()=>{ idx=i; show(); };
+    g.appendChild(b);
+  });
+  const n=BATCH.filter(c=>ratings[c]).length;
+  $('nRated').textContent=n; $('bar').style.width=(n/50*100)+'%';
+}
+
+// ---- Export ----
+function csv(){
+  const lines=['clip_id,rater_id,rating'];
+  if($('exportMode').value==='mine'){
+    BATCH.forEach(c=>lines.push(`${c},${rater},${ratings[c]??''}`));
+  } else {
+    const raters = RATERS.includes(rater) ? RATERS : [...RATERS, rater];
+    BATCH.forEach(c=>raters.forEach(r=>{
+      const v = r===rater ? (ratings[c]??'') : (existing[c][r]??'');
+      lines.push(`${c},${r},${v}`);
+    }));
+  }
+  return lines.join('\n')+'\n';
+}
+function renderOut(){ $('out').value=csv(); }
+$('exportMode').onchange=renderOut;
+$('copyBtn').onclick=async()=>{
+  const text=csv();
+  try{ await navigator.clipboard.writeText(text); toast('CSV copied'); }
+  catch(e){ $('out').focus(); $('out').select(); toast('Press Ctrl+C to copy'); }
+};
+$('dlBtn').onclick=()=>{
+  try{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv()],{type:'text/csv'}));
+    a.download = $('exportMode').value==='mine' ? `ratings_${rater}.csv` : 'ratings_intake.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ toast('Download blocked here. Use Copy.'); }
+};
+
+// ---- Rater / import / reset ----
+$('rater').addEventListener('change', e=>{
+  rater = e.target.value.trim() || 'instructor_a';
+  ratings = store.get('fsr_ratings_'+rater) || {};
+  show();
+});
+$('importBtn').onclick=()=>{
+  let n=0;
+  $('importBox').value.split(/\r?\n/).forEach(line=>{
+    const [c,r,v]=line.split(',').map(s=>(s||'').trim());
+    if(CLIPSET.has(c) && r===rater && /^[1-5]$/.test(v)){ ratings[c]=+v; n++; }
+  });
+  save(); show(); toast(`Imported ${n} ratings for ${rater}`);
+};
+let resetArmed=false;
+$('resetBtn').onclick=()=>{
+  if(!resetArmed){ resetArmed=true; $('resetBtn').textContent='Click again to confirm'; setTimeout(()=>{resetArmed=false;$('resetBtn').textContent='Reset all my ratings';},3000); return; }
+  ratings={}; resetArmed=false; $('resetBtn').textContent='Reset all my ratings'; save(); show(); toast('Ratings cleared');
+};
+
+show();
+</script>
+</body>
+</html>
